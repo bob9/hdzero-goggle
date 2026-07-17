@@ -230,6 +230,7 @@ const setting_t g_setting_defaults = {
         .analog_ratio = SETTING_SOURCES_ANALOG_RATIO_4_3,
         .hdzero_band = SETTING_SOURCES_HDZERO_BAND_RACEBAND,
         .hdzero_bw = SETTING_SOURCES_HDZERO_BW_WIDE,
+        .dial_lowband = false,
     },
     .language = {
         .lang = LANG_ENGLISH_DEFAULT,
@@ -356,6 +357,7 @@ void settings_load(void) {
     g_setting.source.analog_ratio = ini_getl("source", "analog_ratio", g_setting_defaults.source.analog_ratio, SETTING_INI);
     g_setting.source.hdzero_band = ini_getl("source", "hdzero_band", g_setting_defaults.source.hdzero_band, SETTING_INI);
     g_setting.source.hdzero_bw = ini_getl("source", "hdzero_bw", g_setting_defaults.source.hdzero_bw, SETTING_INI);
+    g_setting.source.dial_lowband = settings_get_bool("source", "dial_lowband", g_setting_defaults.source.dial_lowband);
     g_setting.source.analog_channel = ini_getl("source", "analog_channel", g_setting_defaults.source.analog_channel, SETTING_INI);
     if (g_setting.scan.channel > HDZERO_CHANNEL_NUM) {
         g_setting.scan.channel = 1;

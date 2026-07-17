@@ -33,6 +33,7 @@ enum {
     ROW_GOGGLE_AV,
     ROW_GOGGLE_HDZ_BAND,
     ROW_GOGGLE_HDZ_WIDTH,
+    ROW_GOGGLE_DIAL_LOWBAND,
     ROW_GOGGLE_ANALOG_VIDEO,
     ROW_GOGGLE_ANALOG_RATIO,
     ROW_GOGGLE_TEST_PATTERN,
@@ -50,6 +51,7 @@ enum {
     ROW_BOXPRO_AV,
     ROW_BOXPRO_HDZ_BAND,
     ROW_BOXPRO_HDZ_WIDTH,
+    ROW_BOXPRO_DIAL_LOWBAND,
     ROW_BOXPRO_ANALOG_RATIO,
     ROW_BOXPRO_TEST_PATTERN,
     ROW_BOXPRO_BACK,
@@ -63,6 +65,7 @@ enum {
     ROW_GOGGLE2_AV,
     ROW_GOGGLE2_HDZ_BAND,
     ROW_GOGGLE2_HDZ_WIDTH,
+    ROW_GOGGLE2_DIAL_LOWBAND,
     ROW_GOGGLE2_ANALOG_MODULE,
     ROW_GOGGLE2_ANALOG_RATIO,
     ROW_GOGGLE2_TEST_PATTERN,
@@ -77,6 +80,7 @@ enum {
 #define ROW_AV           ROW_GOGGLE_AV
 #define ROW_HDZ_BAND     ROW_GOGGLE_HDZ_BAND
 #define ROW_HDZ_WIDTH    ROW_GOGGLE_HDZ_WIDTH
+#define ROW_DIAL_LOWBAND ROW_GOGGLE_DIAL_LOWBAND
 #define ROW_ANALOG_VIDEO ROW_GOGGLE_ANALOG_VIDEO
 #define ROW_ANALOG_RATIO ROW_GOGGLE_ANALOG_RATIO
 #define ROW_TEST_PATTERN ROW_GOGGLE_TEST_PATTERN
@@ -89,6 +93,7 @@ enum {
 #define ROW_AV           ROW_BOXPRO_AV
 #define ROW_HDZ_BAND     ROW_BOXPRO_HDZ_BAND
 #define ROW_HDZ_WIDTH    ROW_BOXPRO_HDZ_WIDTH
+#define ROW_DIAL_LOWBAND ROW_BOXPRO_DIAL_LOWBAND
 #define ROW_ANALOG_RATIO ROW_BOXPRO_ANALOG_RATIO
 #define ROW_TEST_PATTERN ROW_BOXPRO_TEST_PATTERN
 #define ROW_BACK         ROW_BOXPRO_BACK
@@ -100,6 +105,7 @@ enum {
 #define ROW_AV            ROW_GOGGLE2_AV
 #define ROW_HDZ_BAND      ROW_GOGGLE2_HDZ_BAND
 #define ROW_HDZ_WIDTH     ROW_GOGGLE2_HDZ_WIDTH
+#define ROW_DIAL_LOWBAND  ROW_GOGGLE2_DIAL_LOWBAND
 #define ROW_ANALOG_MODULE ROW_GOGGLE2_ANALOG_MODULE
 #define ROW_ANALOG_RATIO  ROW_GOGGLE2_ANALOG_RATIO
 #define ROW_TEST_PATTERN  ROW_GOGGLE2_TEST_PATTERN
@@ -156,6 +162,9 @@ static lv_obj_t *page_source_create(lv_obj_t *parent, panel_arr_t *arr) {
 
     create_btn_group_item(&btn_group2, cont, 2, _lang("HDZero BW"), _lang("Wide"), _lang("Narrow"), "", "", ROW_HDZ_WIDTH);
     btn_group_set_sel(&btn_group2, g_setting.source.hdzero_bw);
+
+    create_btn_group_item(&btn_group_dial_lowband, cont, 2, _lang("Dial Lowband"), _lang("On"), _lang("Off"), "", "", ROW_DIAL_LOWBAND);
+    btn_group_set_sel(&btn_group_dial_lowband, g_setting.source.dial_lowband ? 0 : 1);
 
 #if defined(HDZGOGGLE)
     create_btn_group_item(&btn_group0, cont, 2, _lang("Analog Video"), "NTSC", "PAL", "", "", ROW_ANALOG_VIDEO);
@@ -340,6 +349,11 @@ static void page_source_on_click(uint8_t key, int sel) {
         btn_group_toggle_sel(&btn_group2);
         g_setting.source.hdzero_bw = btn_group_get_sel(&btn_group2);
         ini_putl("source", "hdzero_bw", g_setting.source.hdzero_bw, SETTING_INI);
+        break;
+    case ROW_DIAL_LOWBAND:
+        btn_group_toggle_sel(&btn_group_dial_lowband);
+        g_setting.source.dial_lowband = btn_group_get_sel(&btn_group_dial_lowband) == 0;
+        settings_put_bool("source", "dial_lowband", g_setting.source.dial_lowband);
         break;
 #if defined(HDZGOGGLE)
     case ROW_ANALOG_VIDEO:
