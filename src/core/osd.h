@@ -42,6 +42,7 @@ typedef struct {
     lv_obj_t *vrx_temp[2];
     lv_obj_t *latency_lock[2];
     lv_obj_t *channel[2];
+    lv_obj_t *vtx_sent[2];
     lv_obj_t *sd_rec[2];
     lv_obj_t *vlq[2];
     lv_obj_t *ant0[2];
