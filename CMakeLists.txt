@@ -145,7 +145,7 @@ if(NOT EMULATOR_BUILD)
 	add_custom_command(OUTPUT ${QUAKE_MERGED_OBJ}
 		# -Wl,-d allocates the engine's common symbols so objcopy can localize them
 		COMMAND ${CMAKE_C_COMPILER} -Wl,-r,-d -nostdlib -o ${QUAKE_MERGED_OBJ}.pre.o "$<TARGET_OBJECTS:quakecore_obj>"
-		COMMAND ${CMAKE_OBJCOPY} --keep-global-symbol=QG_Create --keep-global-symbol=QG_Tick ${QUAKE_MERGED_OBJ}.pre.o ${QUAKE_MERGED_OBJ}
+		COMMAND ${CMAKE_OBJCOPY} --keep-global-symbol=QG_Create --keep-global-symbol=QG_Tick --keep-global-symbol=Cbuf_AddText ${QUAKE_MERGED_OBJ}.pre.o ${QUAKE_MERGED_OBJ}
 		DEPENDS quakecore_obj $<TARGET_OBJECTS:quakecore_obj>
 		COMMAND_EXPAND_LISTS)
 	add_custom_target(quake_merged DEPENDS ${QUAKE_MERGED_OBJ})

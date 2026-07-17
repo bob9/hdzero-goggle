@@ -46,6 +46,8 @@ static bool key_held[512];
 static uint32_t pulse_deadline[512];
 static uint16_t espnow_mask = 0;
 static bool forward_toggled = false;
+static bool analog_present = false; // transmitter sends axis bytes
+static float axis_turn = 0.0f, axis_pitch = 0.0f;
 
 static const struct {
     uint16_t bit;
@@ -182,6 +184,10 @@ void QG_GetMouseMove(int *x, int *y) {
 void QG_GetJoyAxes(float *axes) {
     for (int i = 0; i < QUAKEGENERIC_JOY_MAX_AXES; i++)
         axes[i] = 0.0f;
+    pthread_mutex_lock(&quake_mutex);
+    axes[QUAKEGENERIC_JOY_AXIS_R] = axis_turn;  // yaw rate, proportional
+    axes[QUAKEGENERIC_JOY_AXIS_U] = axis_pitch; // positional pitch
+    pthread_mutex_unlock(&quake_mutex);
 }
 
 //
@@ -193,6 +199,13 @@ static void *quake_thread_fn(void *arg) {
 
     char *argv[] = {"quake", "-basedir", QUAKE_BASEDIR, NULL};
     QG_Create(3, argv);
+
+    // axis R = turn (proportional yaw rate), axis U = look (positional
+    // pitch; see the JOY_ABSOLUTE_AXIS branch in in_null.c). Sensitivities
+    // are negative so stick right turns right and stick up looks up.
+    extern void Cbuf_AddText(char *text);
+    Cbuf_AddText("joystick 1\njoyadvanced 1\njoyadvaxisr 4\njoyadvaxisu 2\n"
+                 "joypitchsensitivity -1\njoyadvancedupdate\n+mlook\n");
 
     uint32_t last = ticks_ms();
     for (;;) {
@@ -252,6 +265,7 @@ void quake_hdz_pause(void) {
     pthread_mutex_lock(&quake_mutex);
     if (quake_started) {
         quake_paused = true;
+        axis_turn = axis_pitch = 0.0f;
         release_all_keys();
     }
     pthread_mutex_unlock(&quake_mutex);
@@ -329,6 +343,14 @@ void quake_hdz_msp_input(const uint8_t *payload, uint16_t size) {
         return;
     }
     uint16_t mask = (uint16_t)payload[0] | ((uint16_t)payload[1] << 8);
+    if (size >= 4) {
+        analog_present = true;
+        axis_turn = (float)(int8_t)payload[2] / 127.0f;
+        axis_pitch = (float)(int8_t)payload[3] / 127.0f;
+    }
+    if (analog_present)
+        mask &= ~(DOOM_BTN_TURN_L | DOOM_BTN_TURN_R |
+                  DOOM_BTN_LOOK_UP | DOOM_BTN_LOOK_DOWN);
     uint16_t changed = mask ^ espnow_mask;
     if (changed & DOOM_WEAPON_FIELD) {
         int slot = (mask >> DOOM_WEAPON_SHIFT) & 7;

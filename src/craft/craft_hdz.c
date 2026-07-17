@@ -54,6 +54,8 @@ static uint16_t espnow_mask;
 static uint16_t pulse_mask;
 static uint32_t pulse_deadline[16];
 static bool forward_toggled;
+static bool analog_present; // transmitter sends axis bytes
+static float axis_turn, axis_pitch;
 
 static uint32_t frame[REN_W * REN_H];
 static bool frame_ready = false;
@@ -293,14 +295,20 @@ static uint16_t effective_mask(void) {
 static void simulate(float dt, uint16_t mask, uint32_t now) {
     static uint32_t last_dig = 0, last_place = 0;
 
-    if (mask & DOOM_BTN_TURN_L)
-        yaw -= 2.1f * dt;
-    if (mask & DOOM_BTN_TURN_R)
-        yaw += 2.1f * dt;
-    if (mask & DOOM_BTN_LOOK_UP)
-        pitch += 1.4f * dt;
-    if (mask & DOOM_BTN_LOOK_DOWN)
-        pitch -= 1.4f * dt;
+    if (analog_present) {
+        // proportional turn rate, positional pitch (stick = view angle)
+        yaw += axis_turn * 2.6f * dt;
+        pitch = axis_pitch;
+    } else {
+        if (mask & DOOM_BTN_TURN_L)
+            yaw -= 2.1f * dt;
+        if (mask & DOOM_BTN_TURN_R)
+            yaw += 2.1f * dt;
+        if (mask & DOOM_BTN_LOOK_UP)
+            pitch += 1.4f * dt;
+        if (mask & DOOM_BTN_LOOK_DOWN)
+            pitch -= 1.4f * dt;
+    }
     if (pitch > 1.0f)
         pitch = 1.0f;
     if (pitch < -1.0f)
@@ -435,6 +443,7 @@ void craft_hdz_pause(void) {
     if (craft_started) {
         craft_paused = true;
         espnow_mask = 0;
+        axis_turn = axis_pitch = 0.0f;
         pulse_mask = 0;
         forward_toggled = false;
         memset(pulse_deadline, 0, sizeof(pulse_deadline));
@@ -512,7 +521,13 @@ void craft_hdz_msp_input(const uint8_t *payload, uint16_t size) {
     if (size < 2)
         return;
     pthread_mutex_lock(&craft_mutex);
-    if (craft_started && !craft_paused)
+    if (craft_started && !craft_paused) {
         espnow_mask = (uint16_t)payload[0] | ((uint16_t)payload[1] << 8);
+        if (size >= 4) {
+            analog_present = true;
+            axis_turn = (float)(int8_t)payload[2] / 127.0f;
+            axis_pitch = (float)(int8_t)payload[3] / 127.0f;
+        }
+    }
     pthread_mutex_unlock(&craft_mutex);
 }

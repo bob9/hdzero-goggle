@@ -287,17 +287,18 @@ void IN_JoyMove (usercmd_t *cmd)
 		case AxisLook:
 			if (in_mlook.state & 1)
 			{
-				if (fabs(fAxisValue) > joy_pitchthreshold.value)
+				if(dwControlMap[i] == JOY_ABSOLUTE_AXIS)
+				{
+					// HDZero goggles: positional pitch - the stick position IS
+					// the view angle (half stick = half look), centering the
+					// stick centers the view
+					cl.viewangles[PITCH] = (fAxisValue * joy_pitchsensitivity.value) * 70.0;
+					V_StopPitchDrift();
+				}
+				else if (fabs(fAxisValue) > joy_pitchthreshold.value)
 				{
 					// pitch movement detected and pitch movement desired by user
-					if(dwControlMap[i] == JOY_ABSOLUTE_AXIS)
-					{
-						cl.viewangles[PITCH] += (fAxisValue * joy_pitchsensitivity.value) * aspeed * cl_pitchspeed.value;
-					}
-					else
-					{
-						cl.viewangles[PITCH] += (fAxisValue * joy_pitchsensitivity.value) * speed * 180.0;
-					}
+					cl.viewangles[PITCH] += (fAxisValue * joy_pitchsensitivity.value) * speed * 180.0;
 					V_StopPitchDrift();
 				}
 				else
