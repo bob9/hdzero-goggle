@@ -39,6 +39,7 @@ typedef enum {
 #define DOOM_BTN_ESCAPE   (1 << 7)
 #define DOOM_BTN_STRAFE_L (1 << 8)
 #define DOOM_BTN_STRAFE_R (1 << 9)
+#define DOOM_BTN_Y        (1 << 10) // confirm Doom's y/n prompts (e.g. quit)
 
 // Look for a Doom IWAD in the SD card root; true if found.
 bool doom_hdz_find_wad(char *buf, size_t len);

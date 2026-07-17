@@ -22,7 +22,7 @@ Savegames and the Doom config file are written to the SD card.
 | Dial rotate              | Turn left / right                 |
 | Dial click               | Fire                              |
 | Right button short press | Toggle move forward               |
-| Right button long press  | Use / open doors (Enter in menus) |
+| Right button long press  | Use / open doors (Enter/Y in menus) |
 | Dial long press          | Leave the game (engine pauses)    |
 
 Tip: in Doom's title menu, right-button **long** press is Enter — press it a
@@ -48,7 +48,8 @@ sticks -> ELRS TX module (fork) -> TX backpack (stock) -> ESP-NOW -> goggle back
 
 Mapping (fixed in firmware; remap anything with the radio mixer):
 elevator = forward/back, aileron = turn, rudder = strafe, AUX2 = fire,
-AUX3 = use, AUX4 = Enter, AUX5 = Escape, AUX10 = doom mode on/off.
+AUX3 = use, AUX4 = Enter, AUX5 = Escape, AUX6 = Y (confirm y/n prompts),
+AUX10 = doom mode on/off.
 Leaving doom mode releases all buttons.
 
 ### Option B — stock module + ESP32 dongle on AUX serial
@@ -94,6 +95,7 @@ builds.)
 | 7   | 0x0080 | Escape       |
 | 8   | 0x0100 | Strafe left  |
 | 9   | 0x0200 | Strafe right |
+| 10  | 0x0400 | Y (confirm quit and other y/n prompts) |
 
 Inputs are ignored while the DOOM page is not active. The dongle sends an
 all-released mask if the radio goes quiet for 600ms.
