@@ -30,12 +30,32 @@ few times to start a game on the default skill.
 
 ## Playing with your EdgeTX radio (ESP-NOW)
 
-**No firmware changes on the radio, ELRS module, or either backpack.** The
-stock goggle backpack drops unknown MSP functions but forwards
-`MSP_ELRS_SET_OSD` (0x00B6) verbatim to the goggles, so the button mask is
-tunnelled inside it (subcommand `0xD0`). The stock ELRS TX module has no
-Lua-to-backpack passthrough, so the sender is a small ESP32 dongle on the
-radio's AUX serial port instead:
+In every variant the goggle side is the same: the stock goggle backpack
+drops unknown MSP functions but forwards `MSP_ELRS_SET_OSD` (0x00B6)
+verbatim to the goggles, so the button mask is tunnelled inside it
+(subcommand `0xD0`). **Both backpacks stay stock.**
+
+### Option A — custom ELRS TX module firmware (no extra hardware)
+
+The `doom-controller-3.5.6` branch of the ExpressLRS fork adds
+`DoomInputToMSPOut` to the TX module: while **AUX10 is high** (doom mode),
+the module encodes the sticks into the button mask and sends it out its
+backpack UART; the stock TX backpack broadcasts it over ESP-NOW.
+
+```
+sticks -> ELRS TX module (fork) -> TX backpack (stock) -> ESP-NOW -> goggle backpack (stock) -> DOOM
+```
+
+Mapping (fixed in firmware; remap anything with the radio mixer):
+elevator = forward/back, aileron = turn, rudder = strafe, AUX2 = fire,
+AUX3 = use, AUX4 = Enter, AUX5 = Escape, AUX10 = doom mode on/off.
+Leaving doom mode releases all buttons.
+
+### Option B — stock module + ESP32 dongle on AUX serial
+
+If you don't want to flash the module, the stock ELRS TX module has no
+Lua-to-backpack passthrough, so a small ESP32 dongle on the radio's AUX
+serial port does the ESP-NOW sending:
 
 ```
 EdgeTX Lua tool  ->  AUX serial  ->  ESP32 dongle  ->  ESP-NOW  ->  goggle backpack  ->  DOOM
