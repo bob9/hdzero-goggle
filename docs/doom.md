@@ -52,6 +52,38 @@ AUX3 = use, AUX4 = Enter, AUX5 = Escape, AUX6 = Y (confirm y/n prompts),
 AUX10 = doom mode on/off.
 Leaving doom mode releases all buttons.
 
+#### EdgeTX model + mixer setup
+
+Make a dedicated model so Doom switches never touch a quad model:
+
+1. **MDL page > Model select**: create a new model, name it `DOOM`.
+2. **MDL > Setup > Internal RF**: set **Mode = CRSF** (otherwise the ELRS
+   Lua reports no module).
+3. **MDL > Mixer**: CH1-CH4 already carry your sticks (AETR) from the
+   wizard - leave them. Then add one line per button: highlight the
+   channel, long-press ENTER > Edit, set **Source** to a switch, leave
+   Weight at 100:
+
+   | Channel | Source (suggested) | Doom action |
+   | ------- | ------------------ | ------------------------ |
+   | CH6     | SH (momentary)     | Fire                     |
+   | CH7     | SD                 | Use / open doors         |
+   | CH8     | SA                 | Enter (Doom menus)       |
+   | CH9     | SB                 | Escape                   |
+   | CH10    | SC                 | Y (confirm quit prompts) |
+   | CH14    | SF                 | Doom mode on/off         |
+
+   Any switches work - the firmware only reads the channel numbers. A
+   switch counts as pressed in its **high** position (past mid), so on
+   3-position switches the middle is off.
+4. Check it: from the main screen open the **Channel Monitor** and flip
+   each switch - CH6..CH14 should move. Sticks show on CH1-CH4.
+
+To play: bind as normal, open DOOM on the goggles, then flip the CH14
+switch - the sticks take over. At the title screen flip the Enter (CH8)
+switch a few times to start a game. Flip CH14 back off when done - it
+releases every button.
+
 ### Option B — stock module + ESP32 dongle on AUX serial
 
 If you don't want to flash the module, the stock ELRS TX module has no
