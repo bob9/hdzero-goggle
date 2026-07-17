@@ -367,7 +367,6 @@ void osd_analog_rssi_show(bool bShow) {
 //  = 0x80 | Channel
 //  = 0x00 | Channel Show Time
 uint8_t channel_osd_mode;
-uint8_t channel_osd_sent; // countdown: show "VTX SENT" beside the channel banner
 
 char *channel2str(uint8_t is_hdzero, uint8_t is_lowband, uint8_t channel) // channel=[1:18]
 {
@@ -420,13 +419,8 @@ void osd_channel_show(bool bShow) {
         }
 
         if (bShow) {
-            if (channel_osd_sent) {
-                color = lv_color_make(0x00, 0xFF, 0x00);
-                snprintf(buf, sizeof(buf), "CH:%s  VTX SENT", channel2str(g_source_info.source == SOURCE_HDZERO, g_setting.source.hdzero_band, ch));
-            } else {
-                color = lv_color_make(0xFF, 0xFF, 0xFF);
-                snprintf(buf, sizeof(buf), "CH:%s", channel2str(g_source_info.source == SOURCE_HDZERO, g_setting.source.hdzero_band, ch));
-            }
+            color = lv_color_make(0xFF, 0xFF, 0xFF);
+            snprintf(buf, sizeof(buf), "CH:%s", channel2str(g_source_info.source == SOURCE_HDZERO, g_setting.source.hdzero_band, ch));
             lv_obj_set_style_bg_opa(g_osd_hdzero.channel[is_fhd], 0, 0);
         }
     }

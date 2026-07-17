@@ -85,7 +85,7 @@ mspAwaitResposne_e msp_await_resposne(uint16_t function, uint16_t payload_size, 
 void msp_cancel_await();
 void msp_ht_update(uint16_t pan, uint16_t tilt, uint16_t roll);
 void msp_channel_update();
-bool msp_channel_update_auto();
+void msp_channel_update_auto();
 
 #ifdef __cplusplus
 }

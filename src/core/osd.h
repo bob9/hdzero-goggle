@@ -87,7 +87,6 @@ typedef struct {
 } osd_font_t;
 
 extern uint8_t channel_osd_mode;
-extern uint8_t channel_osd_sent;
 
 int osd_init(void);
 int osd_clear(void);
