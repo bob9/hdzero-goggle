@@ -400,9 +400,16 @@ void osd_channel_show(bool bShow) {
     char buf[32];
 
     if (channel_osd_mode & 0x80) {
+        uint8_t lowband = g_setting.source.hdzero_band;
         ch = channel_osd_mode & 0x7F;
+        if (g_source_info.source == SOURCE_HDZERO && g_setting.source.dial_lowband) {
+            // all-band dial scroll: 1..12 raceband, 13..20 lowband
+            lowband = ch > BASE_CH_NUM;
+            if (lowband)
+                ch -= BASE_CH_NUM;
+        }
         color = lv_color_make(0xFF, 0x20, 0x20);
-        snprintf(buf, sizeof(buf), "  To %s?  ", channel2str(g_source_info.source == SOURCE_HDZERO, g_setting.source.hdzero_band, ch));
+        snprintf(buf, sizeof(buf), "  To %s?  ", channel2str(g_source_info.source == SOURCE_HDZERO, lowband, ch));
         lv_obj_set_style_bg_opa(g_osd_hdzero.channel[is_fhd], LV_OPA_100, 0);
     } else {
         if (g_source_info.source == SOURCE_HDZERO) {

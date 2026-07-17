@@ -103,9 +103,13 @@ void tune_channel(uint8_t action) {
 
 #if defined HDZGOGGLE
             channel = g_setting.scan.channel;
+            if (g_setting.source.dial_lowband && g_setting.source.hdzero_band != RACE_BAND)
+                channel += BASE_CH_NUM; // lift into the all-band index
 #elif defined(HDZBOXPRO) || defined(HDZGOGGLE2)
             if (g_source_info.source == SOURCE_HDZERO) {
                 channel = g_setting.scan.channel;
+                if (g_setting.source.dial_lowband && g_setting.source.hdzero_band != RACE_BAND)
+                    channel += BASE_CH_NUM; // lift into the all-band index
             } else if (g_source_info.source == SOURCE_AV_MODULE) {
                 channel = g_setting.source.analog_channel;
             } else {
@@ -118,8 +122,15 @@ void tune_channel(uint8_t action) {
     if (tune_state != 2)
         return;
 
+    // With "Dial Lowband" on, the dial scrolls one combined list of all 20
+    // HDZero channels (R1-R8, E1, F1, F2, F4, then L1-L8) as a virtual
+    // index 1..20; confirming a Lowband entry switches the band.
+    bool const all_bands = (g_source_info.source == SOURCE_HDZERO) && g_setting.source.dial_lowband;
+
     uint8_t channel_num;
-    if (g_source_info.source == SOURCE_HDZERO)
+    if (all_bands)
+        channel_num = BASE_CH_NUM + 8;
+    else if (g_source_info.source == SOURCE_HDZERO)
         channel_num = HDZERO_CHANNEL_NUM;
     else if (g_source_info.source == SOURCE_AV_MODULE)
         channel_num = ANALOG_CHANNEL_NUM;
@@ -144,8 +155,19 @@ void tune_channel(uint8_t action) {
     case DIAL_KEY_PRESS: // confirm to tune with VTX freq send
     case DIAL_KEY_CLICK: // confirm to tune
         if (g_source_info.source == SOURCE_HDZERO) {
-            if (g_setting.scan.channel != channel) {
-                g_setting.scan.channel = channel;
+            uint8_t new_band = g_setting.source.hdzero_band;
+            uint8_t new_ch = channel;
+            if (all_bands) {
+                new_band = (channel > BASE_CH_NUM) ? LOW_BAND : RACE_BAND;
+                new_ch = (channel > BASE_CH_NUM) ? channel - BASE_CH_NUM : channel;
+            }
+            if (g_setting.scan.channel != new_ch || g_setting.source.hdzero_band != new_band) {
+                if (g_setting.source.hdzero_band != new_band) {
+                    g_setting.source.hdzero_band = new_band;
+                    ini_putl("source", "hdzero_band", g_setting.source.hdzero_band, SETTING_INI);
+                    page_scannow_set_channel_label();
+                }
+                g_setting.scan.channel = new_ch;
                 ini_putl("scan", "channel", g_setting.scan.channel, SETTING_INI);
                 dvr_cmd(DVR_STOP);
                 hdzero_switch_channel(g_setting.scan.channel - 1);
