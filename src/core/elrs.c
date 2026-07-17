@@ -559,5 +559,10 @@ static void handle_osd(uint8_t payload[], uint8_t size) {
         memcpy(elrs_osd, elrs_osd_overlay, sizeof(elrs_osd));
         osd_signal_update();
         break;
+    case 0xD0: // DOOM input tunnel: the stock goggle backpack drops unknown
+               // MSP functions but forwards MSP_ELRS_SET_OSD verbatim, so
+               // transmitters ride the button mask in on this subcommand
+        doom_hdz_msp_input(&payload[1], size - 1);
+        break;
     }
 }

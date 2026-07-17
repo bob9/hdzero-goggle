@@ -15,29 +15,52 @@ on the goggles.
 
 Savegames and the Doom config file are written to the SD card.
 
-## Goggle controls (fallback)
+## Goggle controls (no extra hardware)
 
-| Input                    | Action                          |
-| ------------------------ | ------------------------------- |
-| Dial rotate              | Turn left / right               |
-| Dial click               | Fire                            |
-| Right button short press | Toggle move forward             |
+| Input                    | Action                            |
+| ------------------------ | --------------------------------- |
+| Dial rotate              | Turn left / right                 |
+| Dial click               | Fire                              |
+| Right button short press | Toggle move forward               |
 | Right button long press  | Use / open doors (Enter in menus) |
-| Dial long press          | Leave the game (engine pauses)  |
+| Dial long press          | Leave the game (engine pauses)    |
 
 Tip: in Doom's title menu, right-button **long** press is Enter — press it a
 few times to start a game on the default skill.
 
-## Playing with your transmitter (ESP-NOW)
+## Playing with your EdgeTX radio (ESP-NOW)
 
-The goggle's ESP32 backpack forwards any MSP packet it receives over ESP-NOW
-to the goggle. This branch adds an MSP function for Doom input:
+**No firmware changes on the radio, ELRS module, or either backpack.** The
+stock goggle backpack drops unknown MSP functions but forwards
+`MSP_ELRS_SET_OSD` (0x00B6) verbatim to the goggles, so the button mask is
+tunnelled inside it (subcommand `0xD0`). The stock ELRS TX module has no
+Lua-to-backpack passthrough, so the sender is a small ESP32 dongle on the
+radio's AUX serial port instead:
 
-- **Function**: `0x0D00` (`MSP_DOOM_INPUT`)
-- **Type**: MSPv2 command (`<`)
-- **Payload**: 2 bytes, little-endian `uint16` bitmask of *currently held*
-  buttons. Send a new mask on every change (edge-triggered on the goggle
-  side, so buttons stay held until you clear their bit).
+```
+EdgeTX Lua tool  ->  AUX serial  ->  ESP32 dongle  ->  ESP-NOW  ->  goggle backpack  ->  DOOM
+```
+
+Both parts live in `misc/doom_controller/`:
+
+1. **`doom.lua`** — copy to `SCRIPTS/TOOLS/` on the radio SD card. Set a free
+   serial port to mode **Lua** (SYS > Hardware > Serial ports). Open the tool
+   to enter "Doom mode": elevator = forward/back, aileron = turn,
+   rudder = strafe, SH = fire, SD = use, ENTER/EXIT keys = Doom menu keys.
+2. **`doom_dongle/doom_dongle.ino`** — flash to any ESP32 dev board with the
+   Arduino IDE. Edit `MY_UID` to your ELRS **bind UID** (6 numbers, shown in
+   the ExpressLRS Lua / backpack web UI — the goggle backpack only listens to
+   senders bearing its bound UID). Wire the radio serial TX pin to ESP32
+   GPIO16 plus GND, power from 5V or USB.
+
+### Wire protocol (for other senders)
+
+Any ESP-NOW peer with the goggles' bind UID can drive the game by sending an
+MSPv2 command, function `0x00B6`, payload `{0xD0, mask_lo, mask_hi}` — a
+little-endian `uint16` bitmask of *currently held* buttons. Send a new mask
+on every change; bits stay held until a mask without them arrives. (A direct
+`MSP_DOOM_INPUT 0x0D00` UART function also exists for custom backpack
+builds.)
 
 | Bit | Value  | Button       |
 | --- | ------ | ------------ |
@@ -52,13 +75,8 @@ to the goggle. This branch adds an MSP function for Doom input:
 | 8   | 0x0100 | Strafe left  |
 | 9   | 0x0200 | Strafe right |
 
-The sender is any ESP-NOW peer bound to the same backpack UID as the goggles
-— e.g. an ELRS TX backpack driven by an EdgeTX Lua script mapping sticks and
-switches to the bitmask, or a bare ESP32 dev board with a couple of buttons.
-Movement is fully analog-free: mask bit set = key held, bit cleared = key
-released, so stick deflection maps naturally to held direction bits.
-
-Inputs are ignored while the DOOM page is not active.
+Inputs are ignored while the DOOM page is not active. The dongle sends an
+all-released mask if the radio goes quiet for 600ms.
 
 ## Notes
 

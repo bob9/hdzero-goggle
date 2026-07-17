@@ -21,10 +21,14 @@ typedef enum {
     DOOM_ACT_TOGGLE_FORWARD, // toggle auto-move forward
 } doom_action_t;
 
-// MSP_DOOM_INPUT payload: uint16 little-endian bitmask of held buttons,
-// sent over ESP-NOW to the goggle backpack (which forwards it as MSP on the
-// goggle UART). Send a new mask on every change; bits stay "held" until a
-// mask without them arrives.
+// Button mask payload: uint16 little-endian bitmask of held buttons. Send a
+// new mask on every change; bits stay "held" until a mask without them
+// arrives. Two transports, both landing in doom_hdz_msp_input():
+//  - MSP_ELRS_SET_OSD (0x00B6) subcommand 0xD0 over ESP-NOW: payload
+//    {0xD0, mask_lo, mask_hi}. Works with the STOCK goggle backpack, which
+//    forwards SET_OSD verbatim to the goggle UART.
+//  - MSP_DOOM_INPUT (0x0D00) with payload {mask_lo, mask_hi}: direct UART
+//    function for custom backpack builds.
 #define DOOM_BTN_FORWARD  (1 << 0)
 #define DOOM_BTN_BACK     (1 << 1)
 #define DOOM_BTN_TURN_L   (1 << 2)
