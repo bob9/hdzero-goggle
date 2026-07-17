@@ -6,7 +6,6 @@
 #include <unistd.h>
 
 #include "core/dvr.h"
-#include "core/elrs.h"
 #include "core/input_device.h"
 #include "core/msp_displayport.h"
 #include "core/osd.h"
@@ -171,7 +170,6 @@ void app_switch_to_hdzero(bool is_default) {
         ch = valid_channel_tb[user_select_index];
         g_setting.scan.channel = ch + 1;
         ini_putl("scan", "channel", g_setting.scan.channel, SETTING_INI);
-        msp_channel_update_auto();
     }
 
     HDZero_open(g_setting.source.hdzero_bw);

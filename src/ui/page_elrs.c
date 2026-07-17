@@ -25,7 +25,6 @@
 
 enum {
     POS_VTX,
-    POS_AUTO_VTX,
     POS_PWR,
     POS_WIFI,
     POS_BIND,
@@ -42,13 +41,10 @@ static lv_obj_t *label_bind_status;
 static lv_obj_t *cancel_label;
 static lv_obj_t *btn_vtx_send;
 static btn_group_t elrs_group;
-static btn_group_t auto_vtx_group;
 static bool binding = false;
 
 static void update_visibility() {
     const bool backpackIsActive = elrs_group.current == 0;
-
-    btn_group_enable(&auto_vtx_group, backpackIsActive);
 
     if (backpackIsActive) {
         lv_obj_clear_state(btn_wifi, STATE_DISABLED);
@@ -58,10 +54,9 @@ static void update_visibility() {
         lv_obj_clear_state(label_bind_status, STATE_DISABLED);
         lv_obj_clear_state(btn_vtx_send, STATE_DISABLED);
 
-        lv_obj_add_flag(pp_elrs.p_arr.panel[POS_VTX], FLAG_SELECTABLE);
-        lv_obj_add_flag(pp_elrs.p_arr.panel[POS_AUTO_VTX], FLAG_SELECTABLE);
-        lv_obj_add_flag(pp_elrs.p_arr.panel[POS_WIFI], FLAG_SELECTABLE);
-        lv_obj_add_flag(pp_elrs.p_arr.panel[POS_BIND], FLAG_SELECTABLE);
+        lv_obj_add_flag(pp_elrs.p_arr.panel[0], FLAG_SELECTABLE);
+        lv_obj_add_flag(pp_elrs.p_arr.panel[2], FLAG_SELECTABLE);
+        lv_obj_add_flag(pp_elrs.p_arr.panel[3], FLAG_SELECTABLE);
     } else {
         lv_obj_add_state(btn_wifi, STATE_DISABLED);
         lv_obj_add_state(label_wifi_status, STATE_DISABLED);
@@ -70,10 +65,9 @@ static void update_visibility() {
         lv_obj_add_state(label_bind_status, STATE_DISABLED);
         lv_obj_add_state(btn_vtx_send, STATE_DISABLED);
 
-        lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_VTX], FLAG_SELECTABLE);
-        lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_AUTO_VTX], FLAG_SELECTABLE);
-        lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_WIFI], FLAG_SELECTABLE);
-        lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_BIND], FLAG_SELECTABLE);
+        lv_obj_clear_flag(pp_elrs.p_arr.panel[0], FLAG_SELECTABLE);
+        lv_obj_clear_flag(pp_elrs.p_arr.panel[2], FLAG_SELECTABLE);
+        lv_obj_clear_flag(pp_elrs.p_arr.panel[3], FLAG_SELECTABLE);
     }
 }
 
@@ -106,9 +100,6 @@ static lv_obj_t *page_elrs_create(lv_obj_t *parent, panel_arr_t *arr) {
     btn_group_set_sel(&elrs_group, !g_setting.elrs.enable);
     snprintf(buf, sizeof(buf), "%s VTX", _lang("Send"));
     btn_vtx_send = create_label_item(cont, buf, 1, POS_VTX, 1);
-    snprintf(buf, sizeof(buf), "%s VTX", _lang("Auto Send"));
-    create_btn_group_item(&auto_vtx_group, cont, 2, buf, _lang("On"), _lang("Off"), "", "", POS_AUTO_VTX);
-    btn_group_set_sel(&auto_vtx_group, !g_setting.elrs.auto_send_vtx);
     btn_wifi = create_label_item(cont, "WiFi", 1, POS_WIFI, 1);
     label_wifi_status = create_label_item(cont, _lang("Click to start"), 2, POS_WIFI, 1);
     btn_bind = create_label_item(cont, _lang("Bind"), 1, POS_BIND, 1);
@@ -175,7 +166,7 @@ static void page_elrs_enter() {
     if (elrs_group.current == 0) {
         request_uid();
     } else {
-        pp_elrs.p_arr.cur = POS_PWR;
+        pp_elrs.p_arr.cur = 1;
     }
 }
 
@@ -195,11 +186,6 @@ static void page_elrs_on_click(uint8_t key, int sel) {
     } else if (sel == POS_VTX) // Send VTX freq
     {
         msp_channel_update();
-    } else if (sel == POS_AUTO_VTX) // Auto send VTX freq on channel change
-    {
-        btn_group_toggle_sel(&auto_vtx_group);
-        g_setting.elrs.auto_send_vtx = btn_group_get_sel(&auto_vtx_group) == 0;
-        settings_put_bool("elrs", "auto_send_vtx", g_setting.elrs.auto_send_vtx);
     } else if (sel == POS_WIFI) // start ESP Wifi
     {
         snprintf(buf, sizeof(buf), "%s...", _lang("Starting"));

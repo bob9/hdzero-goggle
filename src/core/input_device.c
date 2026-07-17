@@ -151,8 +151,6 @@ void tune_channel(uint8_t action) {
                 hdzero_switch_channel(g_setting.scan.channel - 1);
                 if (action == DIAL_KEY_PRESS) {
                     msp_channel_update();
-                } else {
-                    msp_channel_update_auto();
                 }
             }
         } else if (g_source_info.source == SOURCE_AV_MODULE) {
