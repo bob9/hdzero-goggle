@@ -89,6 +89,7 @@ file(GLOB SRC_FILES_PLAYER "src/player/*.c" "src/player/*.h")
 file(GLOB SRC_FILES_EMULATOR "src/emulator/*.c" "src/emulator/*.h")
 file(GLOB SRC_FILES_LANG "src/lang/*.c" "src/lang/*.h")
 file(GLOB SRC_FILES_CRAFT "src/craft/*.c" "src/craft/*.h")
+file(GLOB SRC_FILES_QUAKE_HDZ "src/quake/*.c" "src/quake/*.h")
 
 if(HDZ_GOGGLE)
 	file(GLOB SRC_FILES_IMAGE  "src/image/goggle/*.c" "src/image/goggle/*.h")
@@ -114,6 +115,7 @@ if(EMULATOR_BUILD)
 	list(APPEND SRC_FILES ${SRC_FILES_EMULATOR})
 else()
 	list(APPEND SRC_FILES ${SRC_FILES_PLAYER})
+	list(APPEND SRC_FILES ${SRC_FILES_QUAKE_HDZ})
 endif()
 
 add_executable(${PROJECT_NAME} ${SRC_FILES})
@@ -124,6 +126,32 @@ file(GLOB SRC_FILES_DOOM "src/doom/*.c" "src/doom/*.h" "src/doom/doomgeneric/*.c
 add_library(doomcore STATIC ${SRC_FILES_DOOM})
 target_include_directories(doomcore PRIVATE src/doom/doomgeneric src/doom)
 target_compile_options(doomcore PRIVATE -w)
+
+# QUAKE engine (quakegeneric/WinQuake): its symbol names collide with the
+# Doom engine's (R_Init, S_Init, M_Init, Z_Malloc, ...), so all quake
+# objects are merged into one relocatable object and every symbol except
+# the QG_ entry points is made local before the final link.
+if(NOT EMULATOR_BUILD)
+	file(GLOB SRC_FILES_QUAKE_CORE "src/quake/quakegeneric/*.c")
+	add_library(quakecore_obj OBJECT ${SRC_FILES_QUAKE_CORE})
+	target_include_directories(quakecore_obj PRIVATE src/quake/quakegeneric)
+	target_compile_options(quakecore_obj PRIVATE -w)
+
+	if(NOT CMAKE_OBJCOPY)
+		string(REPLACE "gcc" "objcopy" CMAKE_OBJCOPY "${CMAKE_C_COMPILER}")
+	endif()
+
+	set(QUAKE_MERGED_OBJ ${CMAKE_CURRENT_BINARY_DIR}/quake_merged.o)
+	add_custom_command(OUTPUT ${QUAKE_MERGED_OBJ}
+		# -Wl,-d allocates the engine's common symbols so objcopy can localize them
+		COMMAND ${CMAKE_C_COMPILER} -Wl,-r,-d -nostdlib -o ${QUAKE_MERGED_OBJ}.pre.o "$<TARGET_OBJECTS:quakecore_obj>"
+		COMMAND ${CMAKE_OBJCOPY} --keep-global-symbol=QG_Create --keep-global-symbol=QG_Tick ${QUAKE_MERGED_OBJ}.pre.o ${QUAKE_MERGED_OBJ}
+		DEPENDS quakecore_obj $<TARGET_OBJECTS:quakecore_obj>
+		COMMAND_EXPAND_LISTS)
+	add_custom_target(quake_merged DEPENDS ${QUAKE_MERGED_OBJ})
+	add_dependencies(${PROJECT_NAME} quake_merged)
+	target_link_libraries(${PROJECT_NAME} PRIVATE ${QUAKE_MERGED_OBJ})
+endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE 
 	src/

@@ -180,3 +180,16 @@ leaves (world keeps running, re-enter to resume). Transmitter: identical
 channel mapping to DOOM - sticks move/turn/strafe, AUX2 (fire) digs,
 AUX3 (use) places, AUX4 (enter) jumps, AUX10 doom-mode switch enables the
 sticks. One-block steps are climbed automatically.
+
+## QUAKE
+
+The build also includes **QUAKE** (WinQuake via quakegeneric). It needs the
+game data on the SD card: copy Quake's `id1` folder (containing `pak0.pak` -
+the freely distributable shareware episode, or your registered `pak0.pak` +
+`pak1.pak`) to `SDCARD/quake/id1/`. Saves and config land there too.
+
+Controls mirror DOOM, with two differences because Quake has jumping and no
+"use" action: **use (AUX3) jumps**, and Enter (AUX4) / Escape (AUX5) drive
+the menus (Escape opens the in-game menu; the Y switch confirms quits).
+Goggles: dial turns, dial-click fires, right button short toggles walking,
+right button long jumps (Enter in menus), dial long-press leaves the game.

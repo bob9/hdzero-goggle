@@ -27,6 +27,7 @@
 #include "core/osd.h"
 #include "craft/craft_hdz.h"
 #include "doom/doom_hdz.h"
+#include "quake/quake_hdz.h"
 #include "core/settings.h"
 #include "driver/beep.h"
 #include "driver/dm5680.h"
@@ -312,6 +313,7 @@ void msp_process_packet() {
         case MSP_DOOM_INPUT:
             doom_hdz_msp_input(packet.payload, packet.payload_size);
             craft_hdz_msp_input(packet.payload, packet.payload_size);
+            quake_hdz_msp_input(packet.payload, packet.payload_size);
             break;
         case MSP_GET_BAND_CHAN: {
             uint8_t chan = 0;
@@ -596,6 +598,7 @@ static void handle_osd(uint8_t payload[], uint8_t size) {
                // transmitters ride the button mask in on this subcommand
         doom_hdz_msp_input(&payload[1], size - 1);
         craft_hdz_msp_input(&payload[1], size - 1);
+        quake_hdz_msp_input(&payload[1], size - 1);
         break;
     }
 }

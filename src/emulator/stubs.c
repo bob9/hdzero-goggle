@@ -33,3 +33,13 @@ void Display_720P60_50(int mode, uint8_t is_43) {}
 void Display_1080P30(int mode) {}
 void Display_1080P24(int mode) {}
 #endif
+
+#include "quake/quake_hdz.h"
+
+bool quake_hdz_find_pak(void) { return false; }
+bool quake_hdz_start(void) { return false; }
+void quake_hdz_pause(void) {}
+bool quake_hdz_active(void) { return false; }
+bool quake_hdz_frame_copy(uint32_t *dst) { (void)dst; return false; }
+void quake_hdz_action(quake_action_t act) { (void)act; }
+void quake_hdz_msp_input(const uint8_t *payload, uint16_t size) { (void)payload; (void)size; }
