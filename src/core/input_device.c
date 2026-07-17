@@ -151,12 +151,14 @@ void tune_channel(uint8_t action) {
                 hdzero_switch_channel(g_setting.scan.channel - 1);
                 if (action == DIAL_KEY_PRESS) {
                     msp_channel_update();
-                } else {
-                    msp_channel_update_auto();
+                    channel_osd_sent = CHANNEL_SHOWTIME;
+                } else if (msp_channel_update_auto()) {
+                    channel_osd_sent = CHANNEL_SHOWTIME;
                 }
             } else if (action == DIAL_KEY_PRESS) {
                 // Long press on the current channel: re-send the VTX channel
                 msp_channel_update();
+                channel_osd_sent = CHANNEL_SHOWTIME;
             }
         } else if (g_source_info.source == SOURCE_AV_MODULE) {
             if (g_setting.source.analog_channel != channel) {
@@ -166,6 +168,7 @@ void tune_channel(uint8_t action) {
                 rtc6715.set_ch(g_setting.source.analog_channel - 1);
                 if (action == DIAL_KEY_PRESS) {
                     msp_channel_update();
+                    channel_osd_sent = CHANNEL_SHOWTIME;
                 }
             }
         }
@@ -204,6 +207,8 @@ void tune_channel_confirm() {
 }
 
 void tune_channel_timer() {
+    if (channel_osd_sent)
+        channel_osd_sent--;
     if (tune_state == 2) {
         if (!tune_timer)
             return;
