@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -246,17 +247,25 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
 
 #if PLAY_HDZERO && (defined(HDZGOGGLE) || defined(HDZGOGGLE2))
         // The menu UI drives the panel at 1080p50, which drops frames of
-        // 60/90fps DVR files unevenly; retime to 1080p60 for the duration
-        // of playback (same 148.5MHz pixel clock, so the OLED and FPGA
-        // settings stay valid). 90fps files land in an even 3:2 pulldown.
+        // 60/90fps DVR files unevenly; retime for the duration of
+        // playback. 90fps TS files switch to true 720p90 (every frame
+        // shown) using the vdpo timing, clock phases and MFPGA setup from
+        // the live race-mode path; everything else retimes to 1080p60 on
+        // the same 148.5MHz pixel clock (90fps then lands in an even 3:2
+        // pulldown).
         //
-        // A true 720p90 playback mode was tried (retimedHz = 90 with the
-        // live-mode vdpo timing and MFPGA setup) but black-screens on real
-        // hardware - the panel FPGA's 720p90 pipeline appears to lock onto
-        // the live video input, which is idle during playback. Don't
-        // re-enable without solving that.
+        // The 720p90 mode is TS-only on purpose: the earlier "720p90
+        // black-screens" reports coincided with MP4 recordings, which
+        // black-screen for a container reason of their own (90kHz mp4
+        // timescale, since fixed) - MP4 stays on the proven 1080p60 path.
+        size_t const fnlen = strlen(filename);
+        bool const is_ts = fnlen >= 3 && strcasecmp(filename + fnlen - 3, ".ts") == 0;
         int fps = (playCtx->dmx->fpsX1000 + 500) / 1000;
-        if (fps >= 55) {
+        if (fps >= 80 && is_ts) {
+            playCtx->retimedHz = 90;
+            voWidth = 1280;
+            voHeight = 720;
+        } else if (fps >= 55) {
             playCtx->retimedHz = 60;
         }
         if (playCtx->retimedHz) {
