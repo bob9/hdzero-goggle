@@ -246,15 +246,17 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
 
 #if PLAY_HDZERO && (defined(HDZGOGGLE) || defined(HDZGOGGLE2))
         // The menu UI drives the panel at 1080p50, which drops frames of
-        // 60/90fps DVR files unevenly. Retime for the duration of playback:
-        // 90fps files reuse the live-mode 720p90 timing so every frame is
-        // shown, 60fps files keep the 1080p UI on the same pixel clock.
+        // 60/90fps DVR files unevenly; retime to 1080p60 for the duration
+        // of playback (same 148.5MHz pixel clock, so the OLED and FPGA
+        // settings stay valid). 90fps files land in an even 3:2 pulldown.
+        //
+        // A true 720p90 playback mode was tried (retimedHz = 90 with the
+        // live-mode vdpo timing and MFPGA setup) but black-screens on real
+        // hardware - the panel FPGA's 720p90 pipeline appears to lock onto
+        // the live video input, which is idle during playback. Don't
+        // re-enable without solving that.
         int fps = (playCtx->dmx->fpsX1000 + 500) / 1000;
-        if (fps >= 80) {
-            playCtx->retimedHz = 90;
-            voWidth = 1280;
-            voHeight = 720;
-        } else if (fps >= 55) {
+        if (fps >= 55) {
             playCtx->retimedHz = 60;
         }
         if (playCtx->retimedHz) {
