@@ -62,6 +62,12 @@ static const struct {
     {DOOM_BTN_STRAFE_L, ','},
     {DOOM_BTN_STRAFE_R, '.'},
     {DOOM_BTN_Y, 'y'},
+    // look up/down: id's default.cfg binds +lookup/+lookdown to both of
+    // these pairs, so press both to cover either binding set
+    {DOOM_BTN_LOOK_UP, K_PGUP},
+    {DOOM_BTN_LOOK_UP, 'a'},
+    {DOOM_BTN_LOOK_DOWN, K_PGDN},
+    {DOOM_BTN_LOOK_DOWN, 'z'},
 };
 
 static uint32_t ticks_ms(void) {

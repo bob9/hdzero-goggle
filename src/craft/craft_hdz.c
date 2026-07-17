@@ -45,6 +45,7 @@ static uint8_t world[WORLD * WORLD * WORLD];
 
 static float ppx, ppy, ppz; // player feet position
 static float yaw;
+static float pitch; // view shear, positive = up
 static float vel_y;
 static bool on_ground;
 
@@ -208,7 +209,7 @@ static void render_frame(void) {
             float hdir = ((float)x / REN_W - 0.5f) * 1.6f;
             float dx = sy + cy * hdir;
             float dz = cy - sy * hdir;
-            float dy = vdir;
+            float dy = vdir + pitch;
 
             int hx, hy, hz, px, pz2, py2, side = 0;
             float dist;
@@ -296,6 +297,14 @@ static void simulate(float dt, uint16_t mask, uint32_t now) {
         yaw -= 2.1f * dt;
     if (mask & DOOM_BTN_TURN_R)
         yaw += 2.1f * dt;
+    if (mask & DOOM_BTN_LOOK_UP)
+        pitch += 1.4f * dt;
+    if (mask & DOOM_BTN_LOOK_DOWN)
+        pitch -= 1.4f * dt;
+    if (pitch > 1.0f)
+        pitch = 1.0f;
+    if (pitch < -1.0f)
+        pitch = -1.0f;
 
     float fwd = 0.0f, strafe = 0.0f;
     if (mask & DOOM_BTN_FORWARD)
@@ -345,7 +354,7 @@ static void simulate(float dt, uint16_t mask, uint32_t now) {
     if (mask & (DOOM_BTN_FIRE | DOOM_BTN_USE)) {
         int hx, hy, hz, px, py2, pz2, side;
         float dist;
-        uint8_t b = raycast(ppx, ppy + EYE_HEIGHT, ppz, sinf(yaw), 0.0f, cosf(yaw),
+        uint8_t b = raycast(ppx, ppy + EYE_HEIGHT, ppz, sinf(yaw), pitch, cosf(yaw),
                             &hx, &hy, &hz, &px, &py2, &pz2, &dist, &side);
         if (b != BLK_AIR && dist < 6.0f) {
             if ((mask & DOOM_BTN_FIRE) && now - last_dig > ACT_INTERVAL_MS) {
@@ -405,6 +414,7 @@ bool craft_hdz_start(void) {
         ppz = WORLD / 2 + 0.5f;
         ppy = terrain_height(WORLD / 2, WORLD / 2) + 1.0f;
         yaw = 0.8f;
+        pitch = 0.0f;
         vel_y = 0;
         craft_paused = false;
         if (pthread_create(&craft_thread, NULL, craft_thread_fn, NULL) != 0) {
