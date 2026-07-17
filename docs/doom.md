@@ -52,37 +52,65 @@ AUX3 = use, AUX4 = Enter, AUX5 = Escape, AUX6 = Y (confirm y/n prompts),
 AUX10 = doom mode on/off.
 Leaving doom mode releases all buttons.
 
-#### EdgeTX model + mixer setup
+#### Step 1 — create a separate DOOM model
 
-Make a dedicated model so Doom switches never touch a quad model:
+Always use a **dedicated model** for Doom. The Doom firmware reads fixed
+channels (including ones your quad models may use for arming or modes), so
+playing on a quad model could flip real functions - and vice versa, a
+quad's switch positions could spray Doom inputs. A separate model keeps
+the two worlds isolated and is one page-flip away.
 
-1. **MDL page > Model select**: create a new model, name it `DOOM`.
-2. **MDL > Setup > Internal RF**: set **Mode = CRSF** (otherwise the ELRS
-   Lua reports no module).
-3. **MDL > Mixer**: CH1-CH4 already carry your sticks (AETR) from the
-   wizard - leave them. Then add one line per button: highlight the
-   channel, long-press ENTER > Edit, set **Source** to a switch, leave
-   Weight at 100:
+1. Long-press **MDL** > **Model select** > pick an empty slot > press
+   ENTER > **Create model**. Run the wizard (plane/none is fine - only
+   the sticks matter) and name it `DOOM`.
+2. In **MDL > Setup**, scroll to **Internal RF** and set **Mode = CRSF**.
+   A fresh model often has the internal module off, and without this the
+   ELRS Lua shows "no ExpressLRS - enable a CRSF internal or external
+   module".
+3. No receiver match/model ID fiddling is needed - Doom rides the
+   backpack, not the RC link, so the module just has to be on and bound
+   to your usual bind phrase.
 
-   | Channel | Source (suggested) | Doom action |
-   | ------- | ------------------ | ------------------------ |
-   | CH6     | SH (momentary)     | Fire                     |
-   | CH7     | SD                 | Use / open doors         |
-   | CH8     | SA                 | Enter (Doom menus)       |
-   | CH9     | SB                 | Escape                   |
-   | CH10    | SC                 | Y (confirm quit prompts) |
-   | CH14    | SF                 | Doom mode on/off         |
+#### Step 2 — mixer: every channel Doom reads
 
-   Any switches work - the firmware only reads the channel numbers. A
-   switch counts as pressed in its **high** position (past mid), so on
-   3-position switches the middle is off.
-4. Check it: from the main screen open the **Channel Monitor** and flip
-   each switch - CH6..CH14 should move. Sticks show on CH1-CH4.
+EdgeTX channel numbers vs ELRS AUX names: **AUXn = CH(n+4)** - e.g. AUX2
+is CH6. The firmware reads these channels and nothing else:
 
-To play: bind as normal, open DOOM on the goggles, then flip the CH14
-switch - the sticks take over. At the title screen flip the Enter (CH8)
-switch a few times to start a game. Flip CH14 back off when done - it
-releases every button.
+| EdgeTX channel | ELRS name | Source            | Doom action                    |
+| -------------- | --------- | ----------------- | ------------------------------ |
+| CH1            | -         | Aileron (stick)   | Turn left / right              |
+| CH2            | -         | Elevator (stick)  | Move forward / back            |
+| CH3            | -         | Throttle (stick)  | (unused)                       |
+| CH4            | -         | Rudder (stick)    | Strafe left / right            |
+| CH5            | AUX1      | -                 | (unused, typically arm on quads) |
+| CH6            | AUX2      | SH (momentary)    | Fire                           |
+| CH7            | AUX3      | SD                | Use / open doors               |
+| CH8            | AUX4      | SA                | Enter (Doom menus)             |
+| CH9            | AUX5      | SB                | Escape (Doom menu open/close)  |
+| CH10           | AUX6      | SC                | Y - confirm quit / y-n prompts |
+| CH14           | AUX10     | SF                | **Doom mode on/off**           |
+
+CH1-CH4 are already in the mixer from the model wizard (ELRS requires
+AETR order) - leave them alone. Add the six switch lines: in
+**MDL > Mixer**, highlight the channel, long-press ENTER > **Edit**, set
+**Source** to the switch, leave Weight at 100. Repeat for CH6, CH7, CH8,
+CH9, CH10 and CH14.
+
+The suggested switches are just that - any switch works, the firmware
+only reads channel numbers. A switch counts as pressed in its **high**
+position (past mid): on a 3-position switch, middle and low are "off".
+Sticks register past ~25% deflection.
+
+#### Step 3 — verify, then play
+
+From the main screen open the **Channel Monitor** (long-press PAGE) and
+check: sticks move CH1-CH4, and each switch moves its channel - CH6, CH7,
+CH8, CH9, CH10, CH14.
+
+To play: radio on the DOOM model, open DOOM on the goggles, then flip the
+CH14 (AUX10) switch - the sticks take over. At the title screen flip the
+Enter (CH8) switch a few times to start a game. Flip CH14 off when done -
+it releases every button, and your other models never see any of it.
 
 ### Option B — stock module + ESP32 dongle on AUX serial
 
