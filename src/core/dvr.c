@@ -224,19 +224,22 @@ void dvr_star() {
 }
 
 static void dvr_update_record_conf() {
-    int bitrate_scale;
+    // bitrate multiplier as num/den so the higher-quality options don't
+    // overflow the int math (34000 * 3 is still well within range)
+    int bitrate_num, bitrate_den;
     switch (g_setting.record.bitrate_scale) {
+    case SETTING_RECORD_BITRATE_SCALE_HIGH:
+        bitrate_num = 3;
+        bitrate_den = 2;
+        break;
+    case SETTING_RECORD_BITRATE_SCALE_MAX:
+        bitrate_num = 2;
+        bitrate_den = 1;
+        break;
     case SETTING_RECORD_BITRATE_SCALE_NORMAL:
-        bitrate_scale = 1;
-        break;
-    case SETTING_RECORD_BITRATE_SCALE_HALF:
-        bitrate_scale = 2;
-        break;
-    case SETTING_RECORD_BITRATE_SCALE_QUARTER:
-        bitrate_scale = 4;
-        break;
     default:
-        bitrate_scale = 1;
+        bitrate_num = 1;
+        bitrate_den = 1;
         break;
     }
     if (g_setting.record.format_ts)
@@ -256,26 +259,26 @@ static void dvr_update_record_conf() {
 
         if (CAM_MODE == VR_1080P30) { // 1080p30
             ini_putl("venc", "fps", 60, REC_CONF);
-            ini_putl("venc", "kbps", 34000 / bitrate_scale, REC_CONF);
+            ini_putl("venc", "kbps", 34000 * bitrate_num / bitrate_den, REC_CONF);
             ini_putl("venc", "h265", 0, REC_CONF);
         } else if (CAM_MODE == VR_1080P24) { // 1080p24
             ini_putl("venc", "fps", 50, REC_CONF);
-            ini_putl("venc", "kbps", 34000 / bitrate_scale, REC_CONF);
+            ini_putl("venc", "kbps", 34000 * bitrate_num / bitrate_den, REC_CONF);
             ini_putl("venc", "h265", 0, REC_CONF);
         } else if (CAM_MODE == VR_540P90 || CAM_MODE == VR_540P90_CROP) { // 90fps
             ini_putl("venc", "fps", 90, REC_CONF);
-            ini_putl("venc", "kbps", 34000 / bitrate_scale, REC_CONF);
+            ini_putl("venc", "kbps", 34000 * bitrate_num / bitrate_den, REC_CONF);
             ini_putl("venc", "h265", 0, REC_CONF);
         } else {
             ini_putl("venc", "fps", 60, REC_CONF);
-            ini_putl("venc", "kbps", 24000 / bitrate_scale, REC_CONF);
+            ini_putl("venc", "kbps", 24000 * bitrate_num / bitrate_den, REC_CONF);
             ini_putl("venc", "h265", 1, REC_CONF);
         }
     } else if (g_source_info.source == SOURCE_AV_IN || g_source_info.source == SOURCE_AV_MODULE) { // Analog
         ini_putl("venc", "width", 1280, REC_CONF);
         ini_putl("venc", "height", 720, REC_CONF);
 
-        ini_putl("venc", "kbps", 24000 / bitrate_scale, REC_CONF);
+        ini_putl("venc", "kbps", 24000 * bitrate_num / bitrate_den, REC_CONF);
         ini_putl("venc", "h265", 1, REC_CONF);
         if (g_hw_stat.av_pal[g_hw_stat.is_av_in])
             ini_putl("venc", "fps", 50, REC_CONF);
@@ -288,49 +291,49 @@ static void dvr_update_record_conf() {
             ini_putl("venc", "width", 1920, REC_CONF);
             ini_putl("venc", "height", 1080, REC_CONF);
             ini_putl("venc", "fps", 60, REC_CONF);
-            ini_putl("venc", "kbps", 34000 / bitrate_scale, REC_CONF);
+            ini_putl("venc", "kbps", 34000 * bitrate_num / bitrate_den, REC_CONF);
             ini_putl("venc", "h265", 0, REC_CONF);
             break;
         case HDMIIN_VTMG_1080P50:
             ini_putl("venc", "width", 1920, REC_CONF);
             ini_putl("venc", "height", 1080, REC_CONF);
             ini_putl("venc", "fps", 50, REC_CONF);
-            ini_putl("venc", "kbps", 34000 / bitrate_scale, REC_CONF);
+            ini_putl("venc", "kbps", 34000 * bitrate_num / bitrate_den, REC_CONF);
             ini_putl("venc", "h265", 0, REC_CONF);
             break;
         case HDMIIN_VTMG_1080Pother:
             ini_putl("venc", "width", 1920, REC_CONF);
             ini_putl("venc", "height", 1080, REC_CONF);
             ini_putl("venc", "fps", 50, REC_CONF);
-            ini_putl("venc", "kbps", 34000 / bitrate_scale, REC_CONF);
+            ini_putl("venc", "kbps", 34000 * bitrate_num / bitrate_den, REC_CONF);
             ini_putl("venc", "h265", 0, REC_CONF);
             break;
         case HDMIIN_VTMG_720P50:
             ini_putl("venc", "width", 1280, REC_CONF);
             ini_putl("venc", "height", 720, REC_CONF);
             ini_putl("venc", "fps", 50, REC_CONF);
-            ini_putl("venc", "kbps", 34000 / bitrate_scale, REC_CONF);
+            ini_putl("venc", "kbps", 34000 * bitrate_num / bitrate_den, REC_CONF);
             ini_putl("venc", "h265", 0, REC_CONF);
             break;
         case HDMIIN_VTMG_720P60:
             ini_putl("venc", "width", 1280, REC_CONF);
             ini_putl("venc", "height", 720, REC_CONF);
             ini_putl("venc", "fps", 60, REC_CONF);
-            ini_putl("venc", "kbps", 34000 / bitrate_scale, REC_CONF);
+            ini_putl("venc", "kbps", 34000 * bitrate_num / bitrate_den, REC_CONF);
             ini_putl("venc", "h265", 0, REC_CONF);
             break;
         case HDMIIN_VTMG_720P100:
             ini_putl("venc", "width", 1280, REC_CONF);
             ini_putl("venc", "height", 720, REC_CONF);
             ini_putl("venc", "fps", 90, REC_CONF);
-            ini_putl("venc", "kbps", 34000 / bitrate_scale, REC_CONF);
+            ini_putl("venc", "kbps", 34000 * bitrate_num / bitrate_den, REC_CONF);
             ini_putl("venc", "h265", 0, REC_CONF);
             break;
         default:
             ini_putl("venc", "width", 1280, REC_CONF);
             ini_putl("venc", "height", 720, REC_CONF);
             ini_putl("venc", "fps", 60, REC_CONF);
-            ini_putl("venc", "kbps", 34000 / bitrate_scale, REC_CONF);
+            ini_putl("venc", "kbps", 34000 * bitrate_num / bitrate_den, REC_CONF);
             ini_putl("venc", "h265", 0, REC_CONF);
             break;
         }

@@ -70,7 +70,7 @@ static lv_obj_t *page_record_create(lv_obj_t *parent, panel_arr_t *arr) {
 
     create_btn_group_item(&btn_group_record_mode, cont, 2, _lang("Record Mode"), _lang("Auto"), _lang("Manual"), "", "", 0);
     create_btn_group_item(&btn_group_format, cont, 2, _lang("Record Format"), "MP4", "TS", "", "", 1);
-    create_btn_group_item(&btn_group_bitrate_scale, cont, 3, _lang("Record Bitrate"), _lang("Normal"), "1/2", "1/4", "", 2);
+    create_btn_group_item(&btn_group_bitrate_scale, cont, 3, _lang("Record Bitrate"), _lang("Normal"), "1.5x", "2x", "", 2);
     create_btn_group_item(&btn_group_record_osd, cont, 2, _lang("Record OSD"), _lang("Yes"), _lang("No"), "", "", 3);
     create_btn_group_item(&btn_group_record_audio, cont, 2, _lang("Record Audio"), _lang("Yes"), _lang("No"), "", "", 4);
     create_btn_group_item(&btn_group_audio_source, cont, 3, _lang("Audio Source"), _lang("Mic"), _lang("Line In"), _lang("A/V In"), "", 5);
@@ -87,9 +87,10 @@ static lv_obj_t *page_record_create(lv_obj_t *parent, panel_arr_t *arr) {
     btn_group_set_sel(&btn_group_file_naming, g_setting.record.naming);
 
     lv_obj_t *label2 = lv_label_create(cont);
-    snprintf(buf, sizeof(buf), "%s.\n%s.",
+    snprintf(buf, sizeof(buf), "%s.\n%s.\n%s.",
              _lang("MP4 format requires properly closing files or the files will be corrupt"),
-             _lang("TS format is highly recommended"));
+             _lang("TS format is highly recommended"),
+             _lang("Bitrate: Normal is the default; 1.5x/2x record higher quality but larger files and need a fast SD card"));
     lv_label_set_text(label2, buf);
     lv_obj_set_style_text_font(label2, UI_PAGE_LABEL_FONT, 0);
     lv_obj_set_style_text_align(label2, LV_TEXT_ALIGN_LEFT, 0);
