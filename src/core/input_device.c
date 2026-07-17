@@ -191,6 +191,8 @@ void tune_channel(uint8_t action) {
                 if (action == DIAL_KEY_PRESS) {
                     msp_channel_update();
                     channel_osd_sent = CHANNEL_SHOWTIME;
+                } else if (msp_channel_update_auto()) {
+                    channel_osd_sent = CHANNEL_SHOWTIME;
                 }
             }
         }

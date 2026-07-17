@@ -136,6 +136,7 @@ static void channel_channel_hdzero(uint8_t const band, uint8_t const channel) {
     bool const band_changed = g_setting.source.hdzero_band != band;
     if (band_changed || (g_setting.scan.channel & 0xF) != channel || g_app_state != APP_STATE_VIDEO) {
         g_setting.scan.channel = channel;
+        ini_putl("scan", "channel", g_setting.scan.channel, SETTING_INI);
         beep();
         pthread_mutex_lock(&lvgl_mutex);
         if (band_changed) {
@@ -159,6 +160,7 @@ static void change_channel_analog(uint8_t const channel) {
     }
     if (g_setting.source.analog_channel != channel || g_app_state != APP_STATE_VIDEO) {
         g_setting.source.analog_channel = channel;
+        ini_putl("source", "analog_channel", g_setting.source.analog_channel, SETTING_INI);
         beep();
         pthread_mutex_lock(&lvgl_mutex);
         dvr_cmd(DVR_STOP);

@@ -198,9 +198,17 @@ int ffpack_newVideoStream(FFPack_t* ff, uint16_t programId, FFStreamParameters_t
     stream->avg_frame_rate.den = 1;
     /* a 1/fps time base rounds every capture timestamp to a whole frame
      * slot (and collides when the real rate drifts from the configured
-     * fps), baking judder into the file; 90kHz keeps timestamps exact */
-    stream->time_base.num = 1;
-    stream->time_base.den = 90000;
+     * fps), baking judder into the file; 90kHz keeps timestamps exact.
+     * MP4 is the exception: the goggle player's mp4 demuxer cannot handle
+     * a 90kHz track timescale (playback shows a black screen), so mp4
+     * keeps the stock 1/fps timebase. */
+    if (strcmp(ff->ofmtContext->oformat->name, "mp4") == 0) {
+        stream->time_base.num = 1;
+        stream->time_base.den = param->video.fps;
+    } else {
+        stream->time_base.num = 1;
+        stream->time_base.den = 90000;
+    }
     cp->codec_type = param->mediaType;
     cp->codec_id = param->codecId;
     cp->width = param->video.width;
