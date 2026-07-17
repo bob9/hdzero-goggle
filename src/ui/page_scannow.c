@@ -61,11 +61,11 @@ typedef struct {
     lv_obj_t *img1;
 } channel_t;
 
-channel_t channel_tb[BASE_CH_NUM];
-channel_status_t channel_status_tb[BASE_CH_NUM];
+channel_t channel_tb[SCAN_ALL_CH_NUM];
+channel_status_t channel_status_tb[SCAN_ALL_CH_NUM];
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-int valid_channel_tb[BASE_CH_NUM];
+int valid_channel_tb[SCAN_ALL_CH_NUM];
 int user_select_index = 0;
 
 // local
@@ -78,7 +78,7 @@ static lv_coord_t col_dsc2[] = {UI_SCANNOW_SIGNAL_COLS};
 static lv_coord_t row_dsc2[] = {UI_SCANNOW_SIGNAL_ROWS};
 
 static void select_signal(channel_t *channel) {
-    for (int i = 0; i < BASE_CH_NUM; i++) {
+    for (int i = 0; i < SCAN_ALL_CH_NUM; i++) {
         if (channel_status_tb[i].is_valid) {
             lv_img_set_src(channel_tb[i].img0, &img_signal_status2);
         } else {
@@ -162,6 +162,26 @@ void page_scannow_set_channel_label(void) {
     uint8_t i;
 
     // set channel label
+    if (g_setting.source.dial_lowband) {
+        // all-band: raceband set plus L1-L8, everything visible
+        for (i = 0; i < BASE_CH_NUM; i++) {
+            lv_label_set_text(channel_tb[i].label, race_band_channel_str[i]);
+        }
+        for (i = 0; i < 8; i++) {
+            lv_label_set_text(channel_tb[BASE_CH_NUM + i].label, low_band_channel_str[i]);
+        }
+        for (i = 8; i < SCAN_ALL_CH_NUM; i++) {
+            lv_obj_clear_flag(channel_tb[i].img0, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(channel_tb[i].label, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(channel_tb[i].img1, LV_OBJ_FLAG_HIDDEN);
+        }
+        return;
+    }
+    for (i = BASE_CH_NUM; i < SCAN_ALL_CH_NUM; i++) {
+        lv_obj_add_flag(channel_tb[i].img0, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(channel_tb[i].label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(channel_tb[i].img1, LV_OBJ_FLAG_HIDDEN);
+    }
     if (g_setting.source.hdzero_band == RACE_BAND) {
         // race band
         for (i = 0; i < BASE_CH_NUM; i++) {
@@ -273,6 +293,12 @@ static lv_obj_t *page_scannow_create(lv_obj_t *parent, panel_arr_t *arr) {
     for (int i = 0; i < 4; i++) {
         create_channel_switch(cont2, ((i >> 1) << 2) + col_offset, row_offset + (i & 0x01), &channel_tb[8 + i]);
     }
+
+    // L1-L8 on rows 6-9 (visible only in all-band mode)
+    row_offset = 6;
+    for (int i = 0; i < 8; i++) {
+        create_channel_switch(cont2, ((i >> 2) << 2) + col_offset, row_offset + (i & 0x03), &channel_tb[BASE_CH_NUM + i]);
+    }
     page_scannow_set_channel_label();
 
     return page;
@@ -288,7 +314,7 @@ static void user_select_signal(void) {
 
 static void user_clear_signal(void) {
     user_select_index = 0;
-    for (int i = 0; i < BASE_CH_NUM; i++) {
+    for (int i = 0; i < SCAN_ALL_CH_NUM; i++) {
         lv_img_set_src(channel_tb[i].img0, &img_signal_status);
         lv_img_set_src(channel_tb[i].img1, &img_ant1);
     }
@@ -333,8 +359,11 @@ int8_t scan_now(void) {
     lv_bar_set_value(progressbar, 2, LV_ANIM_OFF);
     lv_timer_handler();
 
+    uint8_t const total = SCAN_CHANNEL_NUM;
+    lv_bar_set_range(progressbar, 0, total + 5);
+
     // clear
-    for (ch = 0; ch < BASE_CH_NUM; ch++) {
+    for (ch = 0; ch < SCAN_ALL_CH_NUM; ch++) {
         valid_channel_tb[ch] = -1;
         channel_status_tb[ch].is_valid = 0;
     }
@@ -343,8 +372,14 @@ int8_t scan_now(void) {
     lv_bar_set_value(progressbar, 4, LV_ANIM_OFF);
     lv_timer_handler();
 
-    for (ch = 0; ch < HDZERO_CHANNEL_NUM; ch++) {
-        scan_channel(g_setting.source.hdzero_band, ch, &gain, &valid);
+    for (ch = 0; ch < total; ch++) {
+        band_t band = g_setting.source.hdzero_band;
+        uint8_t band_ch = ch;
+        if (g_setting.source.dial_lowband) {
+            band = (ch < BASE_CH_NUM) ? RACE_BAND : LOW_BAND;
+            band_ch = (ch < BASE_CH_NUM) ? ch : ch - BASE_CH_NUM;
+        }
+        scan_channel(band, band_ch, &gain, &valid);
         if (valid) {
             channel_status_tb[ch].is_valid = 1;
             channel_status_tb[ch].gain = gain;
@@ -353,10 +388,10 @@ int8_t scan_now(void) {
         lv_bar_set_value(progressbar, ch + 5, LV_ANIM_OFF);
         lv_timer_handler();
     }
-    lv_bar_set_value(progressbar, 14, LV_ANIM_OFF);
+    lv_bar_set_value(progressbar, total + 5, LV_ANIM_OFF);
 
     valid_index = 0;
-    for (ch = 0; ch < HDZERO_CHANNEL_NUM; ch++) {
+    for (ch = 0; ch < total; ch++) {
         if (channel_status_tb[ch].is_valid) {
             valid_channel_tb[valid_index++] = ch;
         }
