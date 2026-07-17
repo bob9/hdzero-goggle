@@ -324,6 +324,11 @@ void quake_hdz_msp_input(const uint8_t *payload, uint16_t size) {
     }
     uint16_t mask = (uint16_t)payload[0] | ((uint16_t)payload[1] << 8);
     uint16_t changed = mask ^ espnow_mask;
+    if (changed & DOOM_WEAPON_FIELD) {
+        int slot = (mask >> DOOM_WEAPON_SHIFT) & 7;
+        if (slot >= 1 && slot <= 6)
+            key_pulse('0' + slot);
+    }
     for (size_t i = 0; i < sizeof(mask_keys) / sizeof(mask_keys[0]); i++) {
         if (changed & mask_keys[i].bit) {
             bool down = (mask & mask_keys[i].bit) != 0;

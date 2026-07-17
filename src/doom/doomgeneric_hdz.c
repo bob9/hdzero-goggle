@@ -307,6 +307,11 @@ void doom_hdz_msp_input(const uint8_t *payload, uint16_t size) {
         if (changed & map[i].bit)
             key_set_held(map[i].key, mask & map[i].bit);
     }
+    if (changed & DOOM_WEAPON_FIELD) {
+        int slot = (mask >> DOOM_WEAPON_SHIFT) & 7;
+        if (slot >= 1 && slot <= 6)
+            key_pulse('0' + slot);
+    }
     espnow_mask = mask;
     pthread_mutex_unlock(&doom_mutex);
 }
