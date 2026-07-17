@@ -47,6 +47,10 @@ typedef enum {
 #define DOOM_WEAPON_SHIFT 11
 #define DOOM_WEAPON_FIELD (7 << DOOM_WEAPON_SHIFT)
 
+// Look up/down (QUAKE and MINECRAFT; Doom's engine cannot pitch)
+#define DOOM_BTN_LOOK_UP   (1 << 14)
+#define DOOM_BTN_LOOK_DOWN (1 << 15)
+
 // Look for a Doom IWAD in the SD card root; true if found.
 bool doom_hdz_find_wad(char *buf, size_t len);
 

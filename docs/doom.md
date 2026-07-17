@@ -47,8 +47,10 @@ sticks -> ELRS TX module (fork) -> TX backpack (stock) -> ESP-NOW -> goggle back
 ```
 
 Mapping (fixed in firmware; remap anything with the radio mixer):
-elevator = forward/back, aileron = turn, rudder = strafe, AUX2 = fire,
-AUX3 = use, AUX4 = Enter, AUX5 = Escape, AUX6 = Y (confirm y/n prompts),
+Mode 2 FPV-style: throttle = walk forward/back (middle = stop),
+elevator = look up/down (QUAKE and MINECRAFT), aileron = turn,
+rudder = strafe, AUX2 = fire, AUX3 = use, AUX4 = Enter, AUX5 = Escape,
+AUX6 = Y (confirm y/n prompts), AUX7 = 6POS weapon select,
 AUX10 = doom mode on/off.
 Leaving doom mode releases all buttons.
 
@@ -79,8 +81,8 @@ is CH6. The firmware reads these channels and nothing else:
 | EdgeTX channel | ELRS name | Source            | Doom action                    |
 | -------------- | --------- | ----------------- | ------------------------------ |
 | CH1            | -         | Aileron (stick)   | Turn left / right              |
-| CH2            | -         | Elevator (stick)  | Move forward / back            |
-| CH3            | -         | Throttle (stick)  | (unused)                       |
+| CH2            | -         | Elevator (stick)  | Look up / down (QUAKE, MINECRAFT) |
+| CH3            | -         | Throttle (stick)  | Walk forward / back (middle = stop) |
 | CH4            | -         | Rudder (stick)    | Strafe left / right            |
 | CH5            | AUX1      | -                 | (unused, typically arm on quads) |
 | CH6            | AUX2      | SH (momentary)    | Fire                           |

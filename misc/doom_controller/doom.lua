@@ -9,7 +9,8 @@
 -- the goggles over ESP-NOW.
 --
 -- Default mapping (change the constants below to taste):
---   Elevator      : move forward / back
+--   Throttle      : walk forward / back (middle = stop)
+--   Elevator      : look up / down (QUAKE and MINECRAFT)
 --   Aileron       : turn left / right
 --   Rudder        : strafe left / right
 --   FIRE_SW  (SH) : fire
@@ -31,6 +32,8 @@ local BTN_ENTER = 64
 local BTN_ESCAPE = 128
 local BTN_STRAFE_L = 256
 local BTN_STRAFE_R = 512
+local BTN_LOOK_UP = 16384
+local BTN_LOOK_DOWN = 32768
 
 local lastMask = -1
 local lastSendTime = 0
@@ -65,14 +68,20 @@ local function run(event)
   end
 
   local mask = pulseMask
+  local thr = getValue("thr")
   local ele = getValue("ele")
   local ail = getValue("ail")
   local rud = getValue("rud")
 
-  if ele > STICK_DEADBAND then
+  if thr > STICK_DEADBAND then
     mask = bit32.bor(mask, BTN_FORWARD)
-  elseif ele < -STICK_DEADBAND then
+  elseif thr < -STICK_DEADBAND then
     mask = bit32.bor(mask, BTN_BACK)
+  end
+  if ele > STICK_DEADBAND then
+    mask = bit32.bor(mask, BTN_LOOK_UP)
+  elseif ele < -STICK_DEADBAND then
+    mask = bit32.bor(mask, BTN_LOOK_DOWN)
   end
   if ail > STICK_DEADBAND then
     mask = bit32.bor(mask, BTN_TURN_R)
