@@ -17,6 +17,7 @@
 
 #include "adec2ao.h"
 #include "awdmx.h"
+#include "core/settings.h"
 #include "driver/hardware.h"
 #include "gogglemsg.h"
 #include "vdec2vo.h"
@@ -250,17 +251,25 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         // of playback (same 148.5MHz pixel clock, so the OLED and FPGA
         // settings stay valid). 90fps files land in an even 3:2 pulldown.
         //
-        // A true 720p90 playback mode was tried (retimedHz = 90 with the
-        // live-mode vdpo timing and MFPGA setup) but black-screens on real
-        // hardware - the panel FPGA's 720p90 pipeline appears to lock onto
-        // the live video input, which is idle during playback. Don't
-        // re-enable without solving that.
+        // EXPERIMENT: true 720p90 playback via the live-mode display path.
+        // A pure UI-side 720p90 retime black-screens - the panel FPGA's
+        // 90Hz pipeline locks onto the live video input. So for 90fps
+        // files, open the HDZero receiver (it outputs valid black frames
+        // even with no RF signal, the same reason the OSD is visible in
+        // live mode with no quad on) and switch with the full live race
+        // mode sequence; the playback video rides the vdpo/OSD overlay.
         int fps = (playCtx->dmx->fpsX1000 + 500) / 1000;
-        if (fps >= 55) {
+        if (fps >= 80) {
+            playCtx->retimedHz = 90;
+            voWidth = 1280;
+            voHeight = 720;
+        } else if (fps >= 55) {
             playCtx->retimedHz = 60;
         }
         if (playCtx->retimedHz) {
             LOGD("retiming display to %dHz for %dfps file", playCtx->retimedHz, fps);
+            if (playCtx->retimedHz == 90)
+                HDZero_open(g_setting.source.hdzero_bw); // FPGA needs a video input to lock to
             Display_UI_SetRefresh(playCtx->retimedHz);
         }
 #endif
@@ -315,6 +324,8 @@ failed:
     awdmx_close(playCtx->dmx);
     if (playCtx->retimedHz) {
         Display_UI_SetRefresh(0);
+        if (playCtx->retimedHz == 90)
+            HDZero_Close();
     }
     pthread_mutex_destroy(&playCtx->mutex);
     free(playCtx);
@@ -335,6 +346,8 @@ void media_exit(media_t *media) {
     awdmx_close(playCtx->dmx);
     if (playCtx->retimedHz) {
         Display_UI_SetRefresh(0);
+        if (playCtx->retimedHz == 90)
+            HDZero_Close();
     }
     pthread_mutex_destroy(&playCtx->mutex);
     free(media->context);

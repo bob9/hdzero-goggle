@@ -576,30 +576,23 @@ void Display_UI() {
 // timing registers — but keeps the FPGA input on the UI (no VO switch, no
 // VRX involvement). 0 restores the stock menu timing with a full
 // Display_UI_init.
+void Display_720P90_t(int mode);
+
 void Display_UI_SetRefresh(int hz) {
     int tmg = (hz == 90) ? VDPO_TMG_720P90 : (hz == 60) ? VDPO_TMG_1080P60 : VDPO_TMG_1080P50;
 
     pthread_mutex_lock(&hardware_mutex);
-    if ((g_hw_stat.source_mode == SOURCE_MODE_UI) && (g_hw_stat.vdpo_tmg != tmg)) {
-        screen.display(0);
+    if ((g_hw_stat.vdpo_tmg != tmg) &&
+        ((g_hw_stat.source_mode == SOURCE_MODE_UI) || (hz == 0))) {
+        if (hz != 90)
+            screen.display(0);
 
         if (hz == 90) {
-            I2C_Write(ADDR_FPGA, 0x8C, 0x00);
-
-            system_exec("dispw -s vdpo 720p90");
-            g_hw_stat.vdpo_tmg = VDPO_TMG_720P90;
-            system_exec("aww 0x0300b340 0x00000008");
-            vclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P90, 0);
-            pclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P90);
-            I2C_Write(ADDR_FPGA, 0x80, 0x03);
-
-            screen.mfpga.set720p90(VR_540P90);
-            screen.vtmg(1);
-
-            I2C_Write(ADDR_FPGA, 0xa7, 0x01);
-            I2C_Write(ADDR_FPGA, 0x8C, 0x01);
-            system_exec("aww 0x0300b084 0x00003fff"); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
-            system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+            // EXPERIMENT: masquerade as live race mode. The receiver must
+            // already be open (media.c does it) so the FPGA's 90Hz
+            // pipeline has a video input to lock to; playback video and
+            // UI ride the vdpo/OSD overlay. Does its own display off/on.
+            Display_720P90_t(VR_540P90);
         } else if (hz == 60) {
             system_exec("dispw -s vdpo 1080p60");
             g_hw_stat.vdpo_tmg = VDPO_TMG_1080P60;
@@ -610,7 +603,8 @@ void Display_UI_SetRefresh(int hz) {
             Display_UI_init();
         }
 
-        screen.display(1);
+        if (hz != 90)
+            screen.display(1);
         LOGI("Display_UI_SetRefresh: %dHz", hz ? hz : 50);
     }
     pthread_mutex_unlock(&hardware_mutex);
