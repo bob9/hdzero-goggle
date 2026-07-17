@@ -598,9 +598,11 @@ void Display_UI() {
 
 // Retime the UI output for DVR playback. 60Hz keeps the 1080p UI on the
 // same 148.5MHz pixel clock, so the OLED and FPGA settings from
-// Display_UI_init stay valid. 90Hz reuses the vdpo timing, clock phases and
-// OLED mode proven by the live 720p90 path (the FPGA stays on the UI input).
-// 0 restores the stock menu timing with a full Display_UI_init.
+// Display_UI_init stay valid. 90Hz mirrors the live 720p90 path
+// (Display_720P90_t) — vdpo timing, clock phases, FPGA input mode and MFPGA
+// timing registers — but keeps the FPGA input on the UI (no VO switch, no
+// VRX involvement). 0 restores the stock menu timing with a full
+// Display_UI_init.
 void Display_UI_SetRefresh(int hz) {
     int tmg = (hz == 90) ? VDPO_TMG_720P90 : (hz == 60) ? VDPO_TMG_1080P60 : VDPO_TMG_1080P50;
 
@@ -609,11 +611,18 @@ void Display_UI_SetRefresh(int hz) {
         screen.display(0);
 
         if (hz == 90) {
+            I2C_Write(ADDR_FPGA, 0x8C, 0x00);
+
             system_exec("dispw -s vdpo 720p90");
             g_hw_stat.vdpo_tmg = VDPO_TMG_720P90;
             vclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P90, 0);
             pclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P90);
+            I2C_Write(ADDR_FPGA, 0x80, 0x03);
+
+            screen.mfpga.set720p90(VR_540P90);
             screen.vtmg(1);
+
+            I2C_Write(ADDR_FPGA, 0x8C, 0x01);
             system_exec("aww 0x0300b084 0x00001565"); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
             system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
         } else if (hz == 60) {
