@@ -17,7 +17,9 @@
 #include "../conf/ui.h"
 
 #include "core/common.hh"
+#include "core/defines.h"
 #include "core/elrs.h"
+#include "core/osd.h"
 #include "driver/esp32.h"
 #include "lang/language.h"
 #include "page_version.h"
@@ -195,6 +197,7 @@ static void page_elrs_on_click(uint8_t key, int sel) {
     } else if (sel == POS_VTX) // Send VTX freq
     {
         msp_channel_update();
+        channel_osd_sent = CHANNEL_SHOWTIME;
     } else if (sel == POS_AUTO_VTX) // Auto send VTX freq on channel change
     {
         btn_group_toggle_sel(&auto_vtx_group);
