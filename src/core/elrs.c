@@ -557,6 +557,14 @@ void msp_channel_update() {
     LOGI("MSPv2 MSP_SET_BAND_CHAN %d sent", chan);
 }
 
+bool msp_channel_update_auto() {
+    if (g_setting.elrs.enable && g_setting.elrs.auto_send_vtx) {
+        msp_channel_update();
+        return true;
+    }
+    return false;
+}
+
 void elrs_clear_osd() {
     for (int i = 0; i < HD_VMAX; i++) {
         for (int j = 0; j < HD_HMAX; j++) {

@@ -367,6 +367,7 @@ void osd_analog_rssi_show(bool bShow) {
 //  = 0x80 | Channel
 //  = 0x00 | Channel Show Time
 uint8_t channel_osd_mode;
+uint8_t channel_osd_sent; // countdown: show "VTX SENT" beside the channel banner
 
 char *channel2str(uint8_t is_hdzero, uint8_t is_lowband, uint8_t channel) // channel=[1:18]
 {
@@ -399,9 +400,16 @@ void osd_channel_show(bool bShow) {
     char buf[32];
 
     if (channel_osd_mode & 0x80) {
+        uint8_t lowband = g_setting.source.hdzero_band;
         ch = channel_osd_mode & 0x7F;
+        if (g_source_info.source == SOURCE_HDZERO && g_setting.source.dial_lowband) {
+            // all-band dial scroll: 1..12 raceband, 13..20 lowband
+            lowband = ch > BASE_CH_NUM;
+            if (lowband)
+                ch -= BASE_CH_NUM;
+        }
         color = lv_color_make(0xFF, 0x20, 0x20);
-        snprintf(buf, sizeof(buf), "  To %s?  ", channel2str(g_source_info.source == SOURCE_HDZERO, g_setting.source.hdzero_band, ch));
+        snprintf(buf, sizeof(buf), "  To %s?  ", channel2str(g_source_info.source == SOURCE_HDZERO, lowband, ch));
         lv_obj_set_style_bg_opa(g_osd_hdzero.channel[is_fhd], LV_OPA_100, 0);
     } else {
         if (g_source_info.source == SOURCE_HDZERO) {
@@ -431,6 +439,18 @@ void osd_channel_show(bool bShow) {
         lv_obj_clear_flag(g_osd_hdzero.channel[is_fhd], LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(g_osd_hdzero.channel[is_fhd], LV_OBJ_FLAG_HIDDEN);
+    }
+
+    // "VTX SENT" confirmation: shown like the tuning preview, independent of
+    // the OSD visibility toggle and the channel element setting
+    if (channel_osd_sent) {
+        bool const is_hdz = g_source_info.source == SOURCE_HDZERO;
+        uint8_t const sch = (is_hdz ? g_setting.scan.channel : g_setting.source.analog_channel) & 0x7F;
+        snprintf(buf, sizeof(buf), "  %s  VTX SENT  ", channel2str(is_hdz, g_setting.source.hdzero_band, sch));
+        lv_label_set_text(g_osd_hdzero.vtx_sent[is_fhd], buf);
+        lv_obj_clear_flag(g_osd_hdzero.vtx_sent[is_fhd], LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(g_osd_hdzero.vtx_sent[is_fhd], LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -871,6 +891,16 @@ static void embedded_osd_init(uint8_t fhd) {
     lv_obj_set_style_bg_color(g_osd_hdzero.channel[fhd], lv_color_hex(0x010101), LV_PART_MAIN);
     lv_obj_set_style_radius(g_osd_hdzero.channel[fhd], 50, 0);
     channel_osd_mode = 0;
+
+    // "VTX SENT" confirmation: fixed top-centre, shown whenever a channel
+    // message goes to the backpack, regardless of OSD visibility settings
+    osd_object_create_label(fhd, &g_osd_hdzero.vtx_sent[fhd], "", &g_setting.osd.element[OSD_GOGGLE_CHANNEL].position, so);
+    lv_obj_set_style_bg_color(g_osd_hdzero.vtx_sent[fhd], lv_color_hex(0x010101), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(g_osd_hdzero.vtx_sent[fhd], LV_OPA_100, 0);
+    lv_obj_set_style_radius(g_osd_hdzero.vtx_sent[fhd], 50, 0);
+    lv_obj_set_style_text_color(g_osd_hdzero.vtx_sent[fhd], lv_color_make(0x00, 0xFF, 0x00), 0);
+    lv_obj_align(g_osd_hdzero.vtx_sent[fhd], LV_ALIGN_TOP_MID, 0, fhd ? 90 : 60);
+    lv_obj_add_flag(g_osd_hdzero.vtx_sent[fhd], LV_OBJ_FLAG_HIDDEN);
 
     osd_resource_path(buf, "%s", is_fhd, noSdcard_bmp);
     osd_object_create_img(fhd, &g_osd_hdzero.sd_rec[fhd], buf, &g_setting.osd.element[OSD_GOGGLE_SD_REC].position, so);

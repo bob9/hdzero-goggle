@@ -132,6 +132,7 @@ typedef struct {
 
 typedef struct {
     bool enable;
+    bool auto_send_vtx;
 } setting_elrs_t;
 
 typedef enum {
@@ -263,6 +264,7 @@ typedef struct {
     setting_sources_analog_ratio_t analog_ratio;   // 0=4:3, 1=16:9
     setting_sources_hdzero_band_t hdzero_band;
     setting_sources_hdzero_bw_t hdzero_bw;
+    bool dial_lowband; // channel dial also scrolls through Lowband L1-L8
     uint8_t analog_channel;
 } setting_sources_t;
 

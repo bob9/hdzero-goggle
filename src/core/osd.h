@@ -42,6 +42,7 @@ typedef struct {
     lv_obj_t *vrx_temp[2];
     lv_obj_t *latency_lock[2];
     lv_obj_t *channel[2];
+    lv_obj_t *vtx_sent[2];
     lv_obj_t *sd_rec[2];
     lv_obj_t *vlq[2];
     lv_obj_t *ant0[2];
@@ -87,6 +88,7 @@ typedef struct {
 } osd_font_t;
 
 extern uint8_t channel_osd_mode;
+extern uint8_t channel_osd_sent;
 
 int osd_init(void);
 int osd_clear(void);

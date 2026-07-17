@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include "core/dvr.h"
+#include "core/elrs.h"
 #include "core/input_device.h"
 #include "core/msp_displayport.h"
 #include "core/osd.h"
@@ -24,7 +25,7 @@
 
 app_state_t g_app_state = APP_STATE_MAINMENU;
 
-extern int valid_channel_tb[10];
+extern int valid_channel_tb[20];
 extern int user_select_index;
 
 void app_state_push(app_state_t state) {
@@ -168,8 +169,20 @@ void app_switch_to_hdzero(bool is_default) {
         ch = g_setting.scan.channel - 1;
     } else {
         ch = valid_channel_tb[user_select_index];
+        if (g_setting.source.dial_lowband) {
+            // all-band scan index: 0-11 raceband, 12-19 lowband
+            uint8_t band = (ch >= BASE_CH_NUM) ? 1 : 0;
+            if (ch >= BASE_CH_NUM)
+                ch -= BASE_CH_NUM;
+            if (band != g_setting.source.hdzero_band) {
+                g_setting.source.hdzero_band = band;
+                ini_putl("source", "hdzero_band", g_setting.source.hdzero_band, SETTING_INI);
+            }
+        }
         g_setting.scan.channel = ch + 1;
         ini_putl("scan", "channel", g_setting.scan.channel, SETTING_INI);
+        if (msp_channel_update_auto())
+            channel_osd_sent = CHANNEL_SHOWTIME;
     }
 
     HDZero_open(g_setting.source.hdzero_bw);
