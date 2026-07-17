@@ -88,6 +88,7 @@ file(GLOB SRC_FILES_UTIL "src/util/*.c" "src/util/*.h")
 file(GLOB SRC_FILES_PLAYER "src/player/*.c" "src/player/*.h")
 file(GLOB SRC_FILES_EMULATOR "src/emulator/*.c" "src/emulator/*.h")
 file(GLOB SRC_FILES_LANG "src/lang/*.c" "src/lang/*.h")
+file(GLOB SRC_FILES_CRAFT "src/craft/*.c" "src/craft/*.h")
 
 if(HDZ_GOGGLE)
 	file(GLOB SRC_FILES_IMAGE  "src/image/goggle/*.c" "src/image/goggle/*.h")
@@ -106,6 +107,7 @@ set(SRC_FILES
 	${SRC_FILES_BMI}
 	${SRC_FILES_UTIL}
 	${SRC_FILES_LANG}
+	${SRC_FILES_CRAFT}
 )
 
 if(EMULATOR_BUILD)
