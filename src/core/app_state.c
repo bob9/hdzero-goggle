@@ -171,7 +171,8 @@ void app_switch_to_hdzero(bool is_default) {
         ch = valid_channel_tb[user_select_index];
         g_setting.scan.channel = ch + 1;
         ini_putl("scan", "channel", g_setting.scan.channel, SETTING_INI);
-        msp_channel_update_auto();
+        if (msp_channel_update_auto())
+            channel_osd_sent = CHANNEL_SHOWTIME;
     }
 
     HDZero_open(g_setting.source.hdzero_bw);
