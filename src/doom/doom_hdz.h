@@ -41,6 +41,12 @@ typedef enum {
 #define DOOM_BTN_STRAFE_R (1 << 9)
 #define DOOM_BTN_Y        (1 << 10) // confirm Doom's y/n prompts (e.g. quit)
 
+// Bits 11-13 carry a 3-bit weapon-slot field (0 = none, 1..6 = select the
+// weapon slot), fed by a multi-position switch such as the RadioMaster
+// 6-position button. A change of value presses the matching number key.
+#define DOOM_WEAPON_SHIFT 11
+#define DOOM_WEAPON_FIELD (7 << DOOM_WEAPON_SHIFT)
+
 // Look for a Doom IWAD in the SD card root; true if found.
 bool doom_hdz_find_wad(char *buf, size_t len);
 

@@ -88,6 +88,7 @@ is CH6. The firmware reads these channels and nothing else:
 | CH8            | AUX4      | SA                | Enter (Doom menus)             |
 | CH9            | AUX5      | SB                | Escape (Doom menu open/close)  |
 | CH10           | AUX6      | SC                | Y - confirm quit / y-n prompts |
+| CH11           | AUX7      | 6POS button       | Weapon select 1-6 (Doom and Quake) |
 | CH14           | AUX10     | SF                | **Doom mode on/off**           |
 
 CH1-CH4 are already in the mixer from the model wizard (ELRS requires
