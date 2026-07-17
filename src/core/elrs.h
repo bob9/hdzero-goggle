@@ -48,6 +48,7 @@ typedef struct __attribute__((packed)) {
 #define MSP_SET_HT_ENABLE  0x030D
 #define MSP_SET_RTC        0x030E
 #define MSP_SET_OSD_ELEM   0x00B6
+#define MSP_DOOM_INPUT     0x0D00 // uint16 LE button bitmask, see doom/doom_hdz.h
 #define MSP_SET_MODE       0x0380 // goggles to backpack
 #define MSP_GET_BP_VERSION 0x0381 // goggles to backpack
 #define MSP_GET_BP_STATUS  0x0382 // goggles to backpack

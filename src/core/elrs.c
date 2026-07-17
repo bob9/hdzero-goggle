@@ -24,6 +24,7 @@
 #include "core/ht.h"
 #include "core/msp_displayport.h"
 #include "core/osd.h"
+#include "doom/doom_hdz.h"
 #include "core/settings.h"
 #include "driver/beep.h"
 #include "driver/dm5680.h"
@@ -287,6 +288,9 @@ void esp32_handler_timeout() {
 void msp_process_packet() {
     if (packet.type == MSP_PACKET_COMMAND) {
         switch (packet.function) {
+        case MSP_DOOM_INPUT:
+            doom_hdz_msp_input(packet.payload, packet.payload_size);
+            break;
         case MSP_GET_BAND_CHAN: {
             uint8_t chan = 0;
             if (g_source_info.source == SOURCE_HDZERO) {
