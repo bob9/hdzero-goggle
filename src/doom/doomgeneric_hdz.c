@@ -265,6 +265,7 @@ void doom_hdz_action(doom_action_t act) {
     case DOOM_ACT_USE_ENTER:
         key_pulse(KEY_USE);
         key_pulse(KEY_ENTER);
+        key_pulse('y'); // doubles as confirm for Doom's y/n prompts
         break;
     case DOOM_ACT_TOGGLE_FORWARD:
         key_set_held(KEY_UPARROW, !key_held[KEY_UPARROW]);
@@ -288,6 +289,7 @@ void doom_hdz_msp_input(const uint8_t *payload, uint16_t size) {
         {DOOM_BTN_ESCAPE, KEY_ESCAPE},
         {DOOM_BTN_STRAFE_L, KEY_STRAFE_L},
         {DOOM_BTN_STRAFE_R, KEY_STRAFE_R},
+        {DOOM_BTN_Y, 'y'},
     };
 
     if (size < 2)
