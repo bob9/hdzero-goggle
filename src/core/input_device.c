@@ -154,6 +154,9 @@ void tune_channel(uint8_t action) {
                 } else {
                     msp_channel_update_auto();
                 }
+            } else if (action == DIAL_KEY_PRESS) {
+                // Long press on the current channel: re-send the VTX channel
+                msp_channel_update();
             }
         } else if (g_source_info.source == SOURCE_AV_MODULE) {
             if (g_setting.source.analog_channel != channel) {
