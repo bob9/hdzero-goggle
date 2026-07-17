@@ -26,6 +26,7 @@
 #include "ui/page_osd.h"
 #include "ui/page_craft.h"
 #include "ui/page_doom.h"
+#include "ui/page_quake.h"
 #include "ui/page_playback.h"
 #include "ui/page_power.h"
 #include "ui/page_record.h"
@@ -51,7 +52,7 @@ static lv_obj_t *root_page;
  * To contain all menu pages.
  */
 
-#define PAGE_PACK_MAX_NUM 21
+#define PAGE_PACK_MAX_NUM 22
 
 static page_pack_t *page_packs[PAGE_PACK_MAX_NUM];
 static size_t page_packs_count = 0;
@@ -325,6 +326,7 @@ void main_menu_init(void) {
 #endif
     page_packs[page_packs_count++] = &pp_doom;
     page_packs[page_packs_count++] = &pp_craft;
+    page_packs[page_packs_count++] = &pp_quake;
     page_packs[page_packs_count++] = &pp_sleep;
 
     menu = lv_menu_create(lv_scr_act());
