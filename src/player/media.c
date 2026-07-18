@@ -68,8 +68,7 @@ typedef struct
     pthread_mutex_t mutex;
 
     int playingTime; // ms
-    int retimedHz;       // nonzero while the UI output is retimed for this file
-    int pendingRetimeHz; // retime to apply once playback is rolling (MP4)
+    int retimedHz; // nonzero while the UI output is retimed for this file
 } PlayContext_t;
 
 static int play_start(PlayContext_t *playCtx) {
@@ -170,15 +169,6 @@ void *thread_media(void *params) {
         }
         pthread_mutex_unlock(&playCtx->mutex);
 
-#if PLAY_HDZERO && (defined(HDZGOGGLE) || defined(HDZGOGGLE2))
-        // deferred MP4 retime: only once video is demonstrably rolling
-        if (playCtx->pendingRetimeHz && playCtx->playingTime > 200) {
-            LOGD("deferred retime to %dHz", playCtx->pendingRetimeHz);
-            Display_UI_SetRefresh(playCtx->pendingRetimeHz);
-            playCtx->retimedHz = playCtx->pendingRetimeHz;
-            playCtx->pendingRetimeHz = 0;
-        }
-#endif
 
         // if(media->is_media_thread_exit)
         //     LOGI("is_media_thread_exit = 2");
@@ -246,6 +236,36 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         goto failed;
     }
 
+#if PLAY_HDZERO && (defined(HDZGOGGLE) || defined(HDZGOGGLE2))
+    {
+        // MP4 probe pass: the mp4 pipeline cannot survive a display mode
+        // change (field-proven three ways), but a 90fps TS proves the
+        // pipeline runs fine under 720p90. So for mp4: open the demuxer
+        // just to read the frame rate, close it again, switch the display
+        // with no pipeline alive, let it settle, and only then build the
+        // real pipeline under the stable mode.
+        size_t const pfnlen = strlen(filename);
+        bool const p_is_ts = pfnlen >= 3 && strcasecmp(filename + pfnlen - 3, ".ts") == 0;
+        if (!p_is_ts) {
+            AwdmxContext_t *probe = awdmx_open(filename, NULL, NULL);
+            if (probe) {
+                int const pfps = (probe->fpsX1000 + 500) / 1000;
+                awdmx_close(probe);
+                if (pfps >= 80) {
+                    playCtx->retimedHz = 90;
+                } else if (pfps >= 55) {
+                    playCtx->retimedHz = 60;
+                }
+                if (playCtx->retimedHz) {
+                    LOGD("pre-retiming display to %dHz for %dfps mp4", playCtx->retimedHz, pfps);
+                    Display_UI_SetRefresh(playCtx->retimedHz);
+                    usleep(400 * 1000); // let the panel settle before the pipeline is born
+                }
+            }
+        }
+    }
+#endif
+
     playCtx->dmx = awdmx_open(filename, play_onDemuxEof, playCtx);
     if (playCtx->dmx == NULL) {
         LOGE("open demux failed");
@@ -254,6 +274,10 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         Vdec2VoParams_t vvParams;
         int voWidth = VO_WIDTH;
         int voHeight = VO_HEIGHT;
+        if (playCtx->retimedHz == 90) { // pre-retimed mp4 probe path
+            voWidth = 1280;
+            voHeight = 720;
+        }
         memset(&vvParams, 0, sizeof(vvParams));
 
 #if PLAY_HDZERO && (defined(HDZGOGGLE) || defined(HDZGOGGLE2))
@@ -272,28 +296,22 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         size_t const fnlen = strlen(filename);
         bool const is_ts = fnlen >= 3 && strcasecmp(filename + fnlen - 3, ".ts") == 0;
         int fps = (playCtx->dmx->fpsX1000 + 500) / 1000;
-        // The MP4 pipeline cannot START under a display retime (that was
-        // the cause of the MP4 black screens), and field testing showed it
-        // does not survive a deferred 720p90 switch either. Iteration 2:
-        // MP4 only ever gets the gentle 1080p50->60 retime, deferred until
-        // frames are flowing, and never a resolution change - 90fps MP4
-        // then plays at a smooth 3:2 pulldown. TS is unchanged (immediate
-        // retime, true 720p90 for 90fps).
-        if (fps >= 80 && is_ts) {
-            playCtx->retimedHz = 90;
-            voWidth = 1280;
-            voHeight = 720;
-        } else if (fps >= 55) {
-            if (is_ts)
+        // TS: retime immediately as always (proven). MP4: the display was
+        // already switched BEFORE this demux was opened (see the probe
+        // pass above) - the mp4 pipeline is born under a stable display
+        // mode and never experiences a transition.
+        if (is_ts) {
+            if (fps >= 80) {
+                playCtx->retimedHz = 90;
+                voWidth = 1280;
+                voHeight = 720;
+            } else if (fps >= 55) {
                 playCtx->retimedHz = 60;
-            else
-                playCtx->pendingRetimeHz = 60;
-        } else if (fps >= 80) {
-            playCtx->pendingRetimeHz = 60; // 90fps MP4: smooth 3:2 at 60Hz
-        }
-        if (playCtx->retimedHz) {
-            LOGD("retiming display to %dHz for %dfps file", playCtx->retimedHz, fps);
-            Display_UI_SetRefresh(playCtx->retimedHz);
+            }
+            if (playCtx->retimedHz) {
+                LOGD("retiming display to %dHz for %dfps file", playCtx->retimedHz, fps);
+                Display_UI_SetRefresh(playCtx->retimedHz);
+            }
         }
 #endif
 
