@@ -32,6 +32,7 @@
 #define LEAPS_THRU_END_OF(y) ((y) / 4 - (y) / 100 + (y) / 400)
 
 static const char *RTC_DEV = "/dev/rtc";
+static const char *RTC_DEV_FALLBACK = "/dev/rtc0";
 static const unsigned char RTC_DAYS_PER_MONTH[] = {
     31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
@@ -40,8 +41,24 @@ static const unsigned char RTC_DAYS_PER_MONTH[] = {
  */
 static int g_rtc_has_battery = 0;
 
+/**
+ * Open the RTC device, falling back to /dev/rtc0 when /dev/rtc is absent
+ * (device naming differs between goggle hardware revisions).
+ */
+static int rtc_open(int flags) {
+    int fd = open(RTC_DEV, flags);
+    if (fd < 0) {
+        fd = open(RTC_DEV_FALLBACK, flags);
+    }
+    return fd;
+}
+
 #ifdef EMULATOR_BUILD
+// The emulated RTC ticks: rtc_set_clock stores a base, rtc_get_clock adds
+// the monotonic time elapsed since — matching real hardware, where the
+// clock advances between reads.
 static struct rtc_date g_rtc_date = {1970, 1, 1, 0, 0, 0};
+static struct timespec g_rtc_set_at = {0, 0};
 #endif
 
 /**
@@ -219,9 +236,22 @@ void rtc_timestamp() {
  */
 void rtc_set_clock(const struct rtc_date *rd) {
 #ifdef EMULATOR_BUILD
+    // Mirror the hardware path, where settimeofday() jumps the system wall
+    // clock (and with it time_ms(), the lvgl tick) by the difference
+    // between the new and the current time.
+    extern int64_t g_time_jump_offset_ms;
+    if (g_rtc_set_at.tv_sec != 0) { // skip the initial boot-time set
+        struct rtc_date cur;
+        rtc_get_clock(&cur);
+        g_time_jump_offset_ms += ((int64_t)rtc_mktime(rd) - (int64_t)rtc_mktime(&cur)) * 1000;
+        LOGI("rtc_set_clock (emu) wall-clock jump %+lld ms",
+             (long long)(((int64_t)rtc_mktime(rd) - (int64_t)rtc_mktime(&cur)) * 1000));
+    }
     g_rtc_date = *rd;
+    clock_gettime(CLOCK_MONOTONIC, &g_rtc_set_at);
+    g_rtc_has_battery = 1;
 #else
-    int fd = open(RTC_DEV, O_WRONLY);
+    int fd = rtc_open(O_WRONLY);
     if (fd >= 0) {
         struct rtc_time rt;
         struct timeval tv;
@@ -233,6 +263,11 @@ void rtc_set_clock(const struct rtc_date *rd) {
         }
         if (ioctl(fd, RTC_SET_TIME, &rt) != 0) {
             LOGE("ioctl(%d,RTC_SET_TIME,&rt) failed with errno(%d)", fd, errno);
+        } else {
+            // The clock is now configured; whether the battery preserves it
+            // is re-evaluated on next boot. Clears the "battery not
+            // installed or clock not configured" state immediately.
+            g_rtc_has_battery = 1;
         }
         close(fd);
     } else {
@@ -246,9 +281,21 @@ void rtc_set_clock(const struct rtc_date *rd) {
  */
 void rtc_get_clock(struct rtc_date *rd) {
 #ifdef EMULATOR_BUILD
-    *rd = g_rtc_date;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    struct timeval tv = {
+        .tv_sec = rtc_mktime(&g_rtc_date) + (now.tv_sec - g_rtc_set_at.tv_sec),
+        .tv_usec = 0,
+    };
+    rtc_tv2rd(&tv, rd);
 #else
-    int fd = open(RTC_DEV, O_RDONLY);
+    // Deterministic epoch on any failure. RTC_RD_TIME reports -EINVAL when
+    // the clock is invalid (e.g. first boot after battery insertion); the
+    // caller previously saw uninitialized stack garbage, which broke both
+    // battery detection and the settings-clock repair path in rtc_init.
+    *rd = (struct rtc_date){.year = 1970, .month = 1, .day = 1, .hour = 0, .min = 0, .sec = 0};
+
+    int fd = rtc_open(O_RDONLY);
     if (fd >= 0) {
         struct rtc_time rt;
         if (ioctl(fd, RTC_RD_TIME, &rt) == 0) {
