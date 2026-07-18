@@ -286,10 +286,23 @@ void load_stars(char *fname) {
     }
 }
 
+static lv_obj_t *play_error_label = NULL;
+
 void media_init(char *fname) {
     media = media_instantiate(fname, notify_cb);
     if (!media) {
         perror("media_instantiate failed.");
+        // an honest message beats a silent black screen
+        play_error_label = lv_label_create(lv_scr_act());
+        lv_label_set_text(play_error_label,
+                          "Cannot play this file on the goggles.\n"
+                          "The recording itself is fine - copy it to a PC to watch it.\n"
+                          "Record in TS format for on-goggle playback.\n\n"
+                          "Long-press the Enter button to exit");
+        lv_obj_set_style_text_font(play_error_label, &lv_font_montserrat_26, 0);
+        lv_obj_set_style_text_align(play_error_label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(play_error_label, lv_color_make(255, 64, 64), 0);
+        lv_obj_center(play_error_label);
         return;
     }
 }
@@ -351,6 +364,10 @@ void mplayer_file(char *fname) {
 }
 
 void mplayer_exit() {
+    if (play_error_label) {
+        lv_obj_del(play_error_label);
+        play_error_label = NULL;
+    }
     pthread_mutex_unlock(&lvgl_mutex);
     if (media) {
         media_exit(media);
