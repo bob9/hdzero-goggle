@@ -197,13 +197,17 @@ const setting_t g_setting_defaults = {
         .sec = 30,
         .format = 0,
     },
-    // Refer to `page_input.c`'s arrays `rollerFunctionPointers` and `btnFunctionPointers`
+    // Refer to `page_input.c`'s arrays `rollerActions` and `btnActions`.
+    // Left long press defaults to Send VTX so a click tunes the goggles
+    // only (previewing someone's channel never retunes your drone's VTX)
+    // and the deliberate long press is what pushes the channel to the VTX.
+    // Main menu moves to right long press to stay reachable.
     .inputs = {
         .roller = 0,
         .left_click = 0,
-        .left_press = 1,
+        .left_press = 11,
         .right_click = 2,
-        .right_press = 6,
+        .right_press = 1,
         .right_double_click = 3,
     },
     .wifi = {

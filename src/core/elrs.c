@@ -35,6 +35,27 @@
 #include "ui/page_scannow.h"
 #include "ui/page_version.h"
 
+#ifdef __APPLE__
+// Emulator-on-macOS compat: no <endian.h> and no unnamed-semaphore timedwait
+#include <libkern/OSByteOrder.h>
+#define le16toh(x) OSSwapLittleToHostInt16(x)
+static int sem_timedwait(sem_t *sem, const struct timespec *abs_timeout) {
+    struct timespec now;
+    for (;;) {
+        if (sem_trywait(sem) == 0) {
+            return 0;
+        }
+        clock_gettime(CLOCK_REALTIME, &now);
+        if (now.tv_sec > abs_timeout->tv_sec ||
+            (now.tv_sec == abs_timeout->tv_sec && now.tv_nsec >= abs_timeout->tv_nsec)) {
+            errno = ETIMEDOUT;
+            return -1;
+        }
+        usleep(1000);
+    }
+}
+#endif
+
 static mspState_e input_state;
 static uint16_t offset;
 static uint8_t input_buffer[MSP_PORT_INBUF_SIZE];
@@ -557,6 +578,13 @@ bool msp_channel_update_auto() {
         return true;
     }
     return false;
+}
+
+// Re-send the current VTX channel to the backpack and show the
+// "VTX SENT" OSD confirmation. Assignable to a button on the Input page.
+void elrs_send_vtx() {
+    msp_channel_update();
+    channel_osd_sent = CHANNEL_SHOWTIME;
 }
 
 void elrs_clear_osd() {
