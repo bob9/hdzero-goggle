@@ -339,6 +339,15 @@ static void dvr_update_record_conf() {
         }
     }
 
+    // The goggle player cannot decode H.265 inside MP4 (a limitation of
+    // the closed mp4 parser - the same H.265 stream plays fine from TS),
+    // so MP4 recordings always use H.264, at a bitrate that covers
+    // H.264's lower efficiency. MP4 exists for compatibility anyway.
+    if (!g_setting.record.format_ts && ini_getl("venc", "h265", 0, REC_CONF)) {
+        ini_putl("venc", "h265", 0, REC_CONF);
+        ini_putl("venc", "kbps", 34000 * bitrate_num / bitrate_den, REC_CONF);
+    }
+
     ini_putl("record", "audio", g_setting.record.audio, REC_CONF);
     dvr_select_audio_source(g_setting.record.audio_source);
     ini_putl("record", "naming", g_setting.record.naming, REC_CONF);
