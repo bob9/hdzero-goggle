@@ -18,6 +18,7 @@
 
 #include "adec2ao.h"
 #include "awdmx.h"
+#include "mp4probe.h"
 #include "driver/hardware.h"
 #include "gogglemsg.h"
 #include "vdec2vo.h"
@@ -238,29 +239,28 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
 
 #if PLAY_HDZERO && (defined(HDZGOGGLE) || defined(HDZGOGGLE2))
     {
-        // MP4 probe pass: the mp4 pipeline cannot survive a display mode
-        // change (field-proven three ways), but a 90fps TS proves the
-        // pipeline runs fine under 720p90. So for mp4: open the demuxer
-        // just to read the frame rate, close it again, switch the display
-        // with no pipeline alive, let it settle, and only then build the
-        // real pipeline under the stable mode.
+        // MP4 pre-switch: the mp4 pipeline cannot survive a display mode
+        // change while it exists (field-proven three ways). A 90fps TS
+        // proves the pipeline family runs fine under 720p90, so switch
+        // the display BEFORE anything is created and let the pipeline be
+        // born under the stable mode. The frame rate is read by parsing
+        // the mp4 boxes directly (mp4probe) - the vendor demuxer is not
+        // touched until the single real open below, because a quick
+        // open/probe/close/reopen of the vendor demuxer is itself
+        // suspected of breaking the second open (iteration 3).
         size_t const pfnlen = strlen(filename);
         bool const p_is_ts = pfnlen >= 3 && strcasecmp(filename + pfnlen - 3, ".ts") == 0;
         if (!p_is_ts) {
-            AwdmxContext_t *probe = awdmx_open(filename, NULL, NULL);
-            if (probe) {
-                int const pfps = (probe->fpsX1000 + 500) / 1000;
-                awdmx_close(probe);
-                if (pfps >= 80) {
-                    playCtx->retimedHz = 90;
-                } else if (pfps >= 55) {
-                    playCtx->retimedHz = 60;
-                }
-                if (playCtx->retimedHz) {
-                    LOGD("pre-retiming display to %dHz for %dfps mp4", playCtx->retimedHz, pfps);
-                    Display_UI_SetRefresh(playCtx->retimedHz);
-                    usleep(400 * 1000); // let the panel settle before the pipeline is born
-                }
+            int const pfps = mp4probe_fps(filename);
+            if (pfps >= 80) {
+                playCtx->retimedHz = 90;
+            } else if (pfps >= 55) {
+                playCtx->retimedHz = 60;
+            }
+            if (playCtx->retimedHz) {
+                LOGD("pre-retiming display to %dHz for %dfps mp4", playCtx->retimedHz, pfps);
+                Display_UI_SetRefresh(playCtx->retimedHz);
+                usleep(400 * 1000); // let the panel settle before the pipeline is born
             }
         }
     }
