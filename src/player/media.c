@@ -261,11 +261,14 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         size_t const fnlen = strlen(filename);
         bool const is_ts = fnlen >= 3 && strcasecmp(filename + fnlen - 3, ".ts") == 0;
         int fps = (playCtx->dmx->fpsX1000 + 500) / 1000;
+        // TS-only for ALL retiming: MP4 playback goes down the exact stock
+        // display path, as a candidate fix for MP4 black screens (and as a
+        // bisect probe for whether the retime is what broke them)
         if (fps >= 80 && is_ts) {
             playCtx->retimedHz = 90;
             voWidth = 1280;
             voHeight = 720;
-        } else if (fps >= 55) {
+        } else if (fps >= 55 && is_ts) {
             playCtx->retimedHz = 60;
         }
         if (playCtx->retimedHz) {
