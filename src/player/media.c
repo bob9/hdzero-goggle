@@ -273,14 +273,14 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         bool const is_ts = fnlen >= 3 && strcasecmp(filename + fnlen - 3, ".ts") == 0;
         int fps = (playCtx->dmx->fpsX1000 + 500) / 1000;
         // The MP4 pipeline cannot START under a display retime (that was
-        // the cause of the MP4 black screens) - but it may tolerate one
-        // once frames are flowing. TS retimes immediately as before; MP4
-        // defers the retime until playback is rolling (see thread_media).
-        if (fps >= 80) {
-            if (is_ts)
-                playCtx->retimedHz = 90;
-            else
-                playCtx->pendingRetimeHz = 90;
+        // the cause of the MP4 black screens), and field testing showed it
+        // does not survive a deferred 720p90 switch either. Iteration 2:
+        // MP4 only ever gets the gentle 1080p50->60 retime, deferred until
+        // frames are flowing, and never a resolution change - 90fps MP4
+        // then plays at a smooth 3:2 pulldown. TS is unchanged (immediate
+        // retime, true 720p90 for 90fps).
+        if (fps >= 80 && is_ts) {
+            playCtx->retimedHz = 90;
             voWidth = 1280;
             voHeight = 720;
         } else if (fps >= 55) {
@@ -288,6 +288,8 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
                 playCtx->retimedHz = 60;
             else
                 playCtx->pendingRetimeHz = 60;
+        } else if (fps >= 80) {
+            playCtx->pendingRetimeHz = 60; // 90fps MP4: smooth 3:2 at 60Hz
         }
         if (playCtx->retimedHz) {
             LOGD("retiming display to %dHz for %dfps file", playCtx->retimedHz, fps);
