@@ -89,6 +89,7 @@ void submenu_enter(void) {
     }
 
     select_menu_tab(pp);
+    LOGI("submenu_enter %s", pp->name);
 
     if (pp->p_arr.max) {
         // if we have selectable entries, select the first selectable one

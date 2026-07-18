@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -551,6 +552,19 @@ static void get_event(int fd) {
 
     read(fd, &event, sizeof(event));
 
+    // Event timestamps follow the system wall clock, so setting the clock
+    // backwards (Set Clock on the clock page, or an ELRS MSP_SET_RTC from a
+    // race timer) leaves next_scroll/next_rel in the future - every dial
+    // event would be discarded until real time catches back up, deadening
+    // the dial for minutes or hours. Resync the gates when time runs
+    // backwards.
+    static struct timeval last_event_time = {0, 0};
+    if (timercmp(&event.time, &last_event_time, <)) {
+        next_scroll = event.time;
+        next_rel = event.time;
+    }
+    last_event_time = event.time;
+
     switch (event.type) {
     case EV_SYN:
         if (event.code == SYN_REPORT) {
@@ -708,7 +722,25 @@ static void *thread_input_device(void *ptr) {
     static uint32_t btn_d_start = 0;
     static uint32_t btn_a_start = 0;
 
+    // Headless scripting: single-character commands on stdin drive the
+    // inputs, so the emulator can be exercised without a window
+    // (SDL_VIDEODRIVER=dummy). u/d = dial, c/p = click/long-press,
+    // r/R = right click/long-press.
+    fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL, 0) | O_NONBLOCK);
+
     while (true) {
+        char cmd;
+        while (read(STDIN_FILENO, &cmd, 1) == 1) {
+            switch (cmd) {
+            case 'u': roller_up(); break;
+            case 'd': roller_down(); break;
+            case 'c': btn_click(); break;
+            case 'p': btn_press(); break;
+            case 'r': rbtn_click(RIGHT_CLICK); break;
+            case 'R': rbtn_click(RIGHT_LONG_PRESS); break;
+            }
+        }
+
         SDL_Event event;
         SDL_LockMutex(global_sdl_mutex);
         while (SDL_PollEvent(&event)) {
@@ -788,6 +820,14 @@ void input_device_init() {
 
         int fd = open(buf, O_RDONLY);
         if (fd >= 0) {
+            // Stamp events with the monotonic clock so the dial's debounce
+            // gates are immune to wall-clock jumps from Set Clock /
+            // MSP_SET_RTC (get_event also resyncs as a fallback for kernels
+            // without EVIOCSCLOCKID).
+            int clkid = CLOCK_MONOTONIC;
+            if (ioctl(fd, EVIOCSCLOCKID, &clkid) != 0) {
+                LOGI("EVIOCSCLOCKID unsupported on %s", buf);
+            }
             add_to_epfd(epfd, fd);
             LOGI("opened %s", buf);
         }
