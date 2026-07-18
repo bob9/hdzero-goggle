@@ -259,6 +259,12 @@ static void notify_cb(media_info_t *info) {
 
     pthread_mutex_lock(&lvgl_mutex);
     update_time_label(true);
+    {
+        static char dbg[600];
+        snprintf(dbg, sizeof(dbg), "%s | t=%dms", media_get_debug(), info->playing_time);
+        if (play_debug_label)
+            lv_label_set_text(play_debug_label, dbg);
+    }
     lv_timer_handler();
     pthread_mutex_unlock(&lvgl_mutex);
 }
@@ -287,6 +293,23 @@ void load_stars(char *fname) {
 }
 
 static lv_obj_t *play_error_label = NULL;
+static lv_obj_t *play_debug_label = NULL;
+
+static void show_play_debug(void) {
+    if (!play_debug_label) {
+        play_debug_label = lv_label_create(lv_scr_act());
+        lv_obj_set_style_text_font(play_debug_label, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(play_debug_label, lv_color_make(255, 255, 0), 0);
+        lv_obj_set_style_bg_color(play_debug_label, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(play_debug_label, LV_OPA_70, 0);
+        lv_obj_set_style_pad_all(play_debug_label, 4, 0);
+        lv_label_set_long_mode(play_debug_label, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(play_debug_label, 900);
+        lv_obj_set_pos(play_debug_label, 40, 40);
+    }
+    lv_label_set_text(play_debug_label, media_get_debug());
+    lv_obj_move_foreground(play_debug_label);
+}
 
 void media_init(char *fname) {
     media = media_instantiate(fname, notify_cb);
@@ -359,6 +382,7 @@ void mplayer_file(char *fname) {
     load_stars(fname);
     init_mplayer();
     media_init(fname);
+    show_play_debug();
     media_start();
     update_mplayer();
 }
@@ -367,6 +391,10 @@ void mplayer_exit() {
     if (play_error_label) {
         lv_obj_del(play_error_label);
         play_error_label = NULL;
+    }
+    if (play_debug_label) {
+        lv_obj_del(play_debug_label);
+        play_debug_label = NULL;
     }
     pthread_mutex_unlock(&lvgl_mutex);
     if (media) {

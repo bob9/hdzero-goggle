@@ -39,6 +39,7 @@ typedef struct {
 media_t *media_instantiate(char *filename, notify_cb_t notify);
 void media_exit(media_t *media);
 void media_control(media_t *media, player_cmd_t *cmd);
+const char *media_get_debug(void); // on-screen diagnostic checkpoints
 
 #ifdef __cplusplus
 }

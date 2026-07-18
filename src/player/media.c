@@ -72,6 +72,20 @@ typedef struct
     int retimedHz; // nonzero while the UI output is retimed for this file
 } PlayContext_t;
 
+// On-screen diagnostic line for field testing: each stage of playback
+// startup appends a checkpoint, so a photo of the screen shows exactly
+// how far the pipeline got and what the demuxer reported.
+static char media_debug[512];
+
+static void media_debug_add(const char *tag) {
+    size_t len = strlen(media_debug);
+    snprintf(media_debug + len, sizeof(media_debug) - len, "%s ", tag);
+}
+
+const char *media_get_debug(void) {
+    return media_debug;
+}
+
 static int play_start(PlayContext_t *playCtx) {
     int ret = vdec2vo_start(playCtx->vv);
 
@@ -250,8 +264,12 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         // suspected of breaking the second open (iteration 3).
         size_t const pfnlen = strlen(filename);
         bool const p_is_ts = pfnlen >= 3 && strcasecmp(filename + pfnlen - 3, ".ts") == 0;
+        media_debug[0] = 0;
         if (!p_is_ts) {
             int const pfps = mp4probe_fps(filename);
+            char dbg[64];
+            snprintf(dbg, sizeof(dbg), "probe:mp4 fps=%d", pfps);
+            media_debug_add(dbg);
             if (pfps >= 80) {
                 playCtx->retimedHz = 90;
             } else if (pfps >= 55) {
@@ -259,9 +277,14 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
             }
             if (playCtx->retimedHz) {
                 LOGD("pre-retiming display to %dHz for %dfps mp4", playCtx->retimedHz, pfps);
+                snprintf(dbg, sizeof(dbg), "retime>%dHz", playCtx->retimedHz);
+                media_debug_add(dbg);
                 Display_UI_SetRefresh(playCtx->retimedHz);
                 usleep(400 * 1000); // let the panel settle before the pipeline is born
+                media_debug_add("settled");
             }
+        } else {
+            media_debug_add("probe:ts");
         }
     }
 #endif
@@ -269,8 +292,17 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
     playCtx->dmx = awdmx_open(filename, play_onDemuxEof, playCtx);
     if (playCtx->dmx == NULL) {
         LOGE("open demux failed");
+        media_debug_add("dmx:FAIL");
         goto failed;
     } else {
+        {
+            char dbg[96];
+            snprintf(dbg, sizeof(dbg), "dmx:OK v=%d a=%d codec=%d %dx%d fpsX1000=%d",
+                     playCtx->dmx->videoNum, playCtx->dmx->audioNum,
+                     (int)playCtx->dmx->codecType, playCtx->dmx->width,
+                     playCtx->dmx->height, playCtx->dmx->fpsX1000);
+            media_debug_add(dbg);
+        }
         Vdec2VoParams_t vvParams;
         int voWidth = VO_WIDTH;
         int voHeight = VO_HEIGHT;
@@ -347,9 +379,11 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
     }
     if (ret != 0) {
         LOGE("prepare vdec2vo failed");
+        media_debug_add("prepare:FAIL");
         goto failed;
     }
 
+    media_debug_add("prepared ready");
     LOGE("ready to play");
     media->is_media_thread_exit = false;
     ret = pthread_create(&pid, NULL, thread_media, (void *)media);
