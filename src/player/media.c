@@ -68,7 +68,8 @@ typedef struct
     pthread_mutex_t mutex;
 
     int playingTime; // ms
-    int retimedHz;   // nonzero while the UI output is retimed for this file
+    int retimedHz;       // nonzero while the UI output is retimed for this file
+    int pendingRetimeHz; // retime to apply once playback is rolling (MP4)
 } PlayContext_t;
 
 static int play_start(PlayContext_t *playCtx) {
@@ -169,6 +170,16 @@ void *thread_media(void *params) {
         }
         pthread_mutex_unlock(&playCtx->mutex);
 
+#if PLAY_HDZERO && (defined(HDZGOGGLE) || defined(HDZGOGGLE2))
+        // deferred MP4 retime: only once video is demonstrably rolling
+        if (playCtx->pendingRetimeHz && playCtx->playingTime > 200) {
+            LOGD("deferred retime to %dHz", playCtx->pendingRetimeHz);
+            Display_UI_SetRefresh(playCtx->pendingRetimeHz);
+            playCtx->retimedHz = playCtx->pendingRetimeHz;
+            playCtx->pendingRetimeHz = 0;
+        }
+#endif
+
         // if(media->is_media_thread_exit)
         //     LOGI("is_media_thread_exit = 2");
 
@@ -261,15 +272,22 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         size_t const fnlen = strlen(filename);
         bool const is_ts = fnlen >= 3 && strcasecmp(filename + fnlen - 3, ".ts") == 0;
         int fps = (playCtx->dmx->fpsX1000 + 500) / 1000;
-        // TS-only for ALL retiming: MP4 playback goes down the exact stock
-        // display path, as a candidate fix for MP4 black screens (and as a
-        // bisect probe for whether the retime is what broke them)
-        if (fps >= 80 && is_ts) {
-            playCtx->retimedHz = 90;
+        // The MP4 pipeline cannot START under a display retime (that was
+        // the cause of the MP4 black screens) - but it may tolerate one
+        // once frames are flowing. TS retimes immediately as before; MP4
+        // defers the retime until playback is rolling (see thread_media).
+        if (fps >= 80) {
+            if (is_ts)
+                playCtx->retimedHz = 90;
+            else
+                playCtx->pendingRetimeHz = 90;
             voWidth = 1280;
             voHeight = 720;
-        } else if (fps >= 55 && is_ts) {
-            playCtx->retimedHz = 60;
+        } else if (fps >= 55) {
+            if (is_ts)
+                playCtx->retimedHz = 60;
+            else
+                playCtx->pendingRetimeHz = 60;
         }
         if (playCtx->retimedHz) {
             LOGD("retiming display to %dHz for %dfps file", playCtx->retimedHz, fps);
