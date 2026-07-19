@@ -1,5 +1,7 @@
 #include "media.h"
 
+#include "ts_probe.h"
+
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -261,6 +263,17 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         size_t const fnlen = strlen(filename);
         bool const is_ts = fnlen >= 3 && strcasecmp(filename + fnlen - 3, ".ts") == 0;
         int fps = (playCtx->dmx->fpsX1000 + 500) / 1000;
+        if (fps == 0 && is_ts) {
+            // The platform demuxer reports 0 fps for TS streams without
+            // embedded timing info, which would silently skip the retime
+            // and play with the stock-50Hz judder; measure the frame rate
+            // from the PTS spacing instead.
+            int const probed = ts_probe_fps_x1000(filename);
+            if (probed > 0) {
+                fps = (probed + 500) / 1000;
+                LOGD("ts fps probe: %d mfps", probed);
+            }
+        }
         // TS-only for ALL retiming: MP4 playback goes down the exact stock
         // display path, as a candidate fix for MP4 black screens (and as a
         // bisect probe for whether the retime is what broke them)

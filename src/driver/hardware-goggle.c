@@ -628,6 +628,10 @@ void Display_UI_SetRefresh(int hz) {
         } else if (hz == 60) {
             system_exec("dispw -s vdpo 1080p60");
             g_hw_stat.vdpo_tmg = VDPO_TMG_1080P60;
+            // The OLED needs the 1080p60 timing mode, same as every other
+            // vdpo-1080p60 path on this goggle (Display_1080P30_t/24_t);
+            // leaving the 1080p50 UI mode shows a black screen on G1.
+            screen.vtmg(2);
             system_exec("aww 0x0300b084 0x00001565"); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
             system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
         } else {
