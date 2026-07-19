@@ -680,18 +680,31 @@ int Display_UI_BenchRestore(const char **desc) {
     return 0;
 }
 
-// Same shape as the goggles2 implementation, but the G1's video-path
-// playback modes are not yet hardware-verified, so nothing calls this
-// automatically on G1 - run the bench to verify, then enable in media.c.
+static bool playback_opened_bb = false;
+
 void Display_Playback_SetMode(int hz) {
     pthread_mutex_lock(&hardware_mutex);
     screen.display(0);
 
     Display_UI_init();
-    if (hz == 90)
-        Display_720P90_t(VR_540P90);
-    else if (hz == 60)
-        Display_1080P30_t(VR_1080P30);
+    if (hz) {
+        // The G1 FPGA idles its video input on a green raster, and the
+        // overlay chroma-key punches near-black pixels through to it -
+        // dark video areas glow green (goggles2 idles black, so this never
+        // showed there). With the baseband running, keyed-through pixels
+        // land on a true black mute raster instead (bench recipes 2/4).
+        if (!g_hw_stat.hdzero_open) {
+            HDZero_open(g_setting.source.hdzero_bw);
+            playback_opened_bb = true;
+        }
+        if (hz == 90)
+            Display_720P90_t(VR_540P90);
+        else
+            Display_1080P30_t(VR_1080P30);
+    } else if (playback_opened_bb) {
+        HDZero_Close();
+        playback_opened_bb = false;
+    }
 
     screen.display(1);
     pthread_mutex_unlock(&hardware_mutex);

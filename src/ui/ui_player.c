@@ -400,7 +400,14 @@ void mplayer_file(char *fname) {
     load_stars(fname);
     init_mplayer();
     media_init(fname);
-    if (media_retimed_hz(media) == 90) {
+    int const retimed = media_retimed_hz(media);
+    if (retimed) {
+        // the live-video display path chroma-keys near-black pixels; the
+        // control bar's translucent dark grey blends to below the key
+        // threshold and vanishes - make it solid while retimed
+        lv_obj_set_style_opa(controller.bar, LV_OPA_COVER, 0);
+    }
+    if (retimed == 90) {
         // the 720p90 display mode scans out the top-left 1280x720 of the
         // layout; move the control bar up into the visible window
         lv_obj_set_pos(controller.bar, (1280 - UI_MPLAYER_CB_WIDTH) >> 1, 720 - 160);
