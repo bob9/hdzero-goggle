@@ -24,6 +24,7 @@ extern "C" {
 #define WIFI_OFF      "/mnt/app/script/wlan_stop.sh"
 #define WIFI_AP_ON    "/tmp/wlan_start_ap.sh"
 #define WIFI_STA_ON   "/tmp/wlan_start_sta.sh"
+#define WIFI_SCAN_ON  "/tmp/wlan_scan.sh"
 #define WIFI_AP_CFG   "/tmp/hostapd.conf"
 #define WIFI_DHCP_CFG "/tmp/udhcpd.conf"
 #define WIFI_STA_CFG  "/tmp/wpa_supplicant.conf"

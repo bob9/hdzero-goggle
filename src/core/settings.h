@@ -214,6 +214,13 @@ enum {
     WIFI_MODE_COUNT
 };
 
+#define WIFI_NETWORKS_MAX 10 // Remembered client networks
+
+typedef struct {
+    char ssid[WIFI_SSID_MAX];
+    char passwd[WIFI_PASSWD_MAX];
+} wifi_network_t;
+
 typedef struct {
     bool enable;
     uint8_t mode; // 0 == WIFI_MODE_AP, 1 == WIFI_MODE_STA
@@ -228,6 +235,8 @@ typedef struct {
     uint8_t rf_channel;
     char root_pw[WIFI_SSID_MAX];
     bool ssh;
+    int net_count;
+    wifi_network_t networks[WIFI_NETWORKS_MAX];
 } wifi_t;
 
 typedef struct {
