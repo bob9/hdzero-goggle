@@ -85,7 +85,7 @@ const setting_t g_setting_defaults = {
     },
     .elrs = {
         .enable = false,
-        .auto_send_vtx = false,
+        .vtx_send_enable = true,
     },
     .ease = {
         .no_dial = 0,
@@ -197,13 +197,17 @@ const setting_t g_setting_defaults = {
         .sec = 30,
         .format = 0,
     },
-    // Refer to `page_input.c`'s arrays `rollerFunctionPointers` and `btnFunctionPointers`
+    // Refer to `page_input.c`'s arrays `rollerActions` and `btnActions`.
+    // Right long press defaults to Send VTX: a click tunes the goggles
+    // only (previewing someone's channel never retunes your drone's VTX)
+    // and the deliberate long press pushes the channel to the VTX.
+    // Left long press stays Main menu, as on the stock build.
     .inputs = {
         .roller = 0,
         .left_click = 0,
         .left_press = 1,
         .right_click = 2,
-        .right_press = 6,
+        .right_press = 11,
         .right_double_click = 3,
     },
     .wifi = {
@@ -450,7 +454,7 @@ void settings_load(void) {
 
     // elrs
     g_setting.elrs.enable = settings_get_bool("elrs", "enable", g_setting_defaults.elrs.enable);
-    g_setting.elrs.auto_send_vtx = settings_get_bool("elrs", "auto_send_vtx", g_setting_defaults.elrs.auto_send_vtx);
+    g_setting.elrs.vtx_send_enable = settings_get_bool("elrs", "vtx_send_enable", g_setting_defaults.elrs.vtx_send_enable);
 
     // clock
     g_setting.clock.year = ini_getl("clock", "year", g_setting_defaults.clock.year, SETTING_INI);

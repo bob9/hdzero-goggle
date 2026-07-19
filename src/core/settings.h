@@ -132,7 +132,7 @@ typedef struct {
 
 typedef struct {
     bool enable;
-    bool auto_send_vtx;
+    bool vtx_send_enable; // master switch: may VTX channel commands be sent at all
 } setting_elrs_t;
 
 typedef enum {

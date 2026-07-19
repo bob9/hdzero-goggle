@@ -1,12 +1,13 @@
 #include "media.h"
 
+#include "ts_probe.h"
+
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -19,7 +20,6 @@
 
 #include "adec2ao.h"
 #include "awdmx.h"
-#include "mp4probe.h"
 #include "driver/hardware.h"
 #include "gogglemsg.h"
 #include "vdec2vo.h"
@@ -70,22 +70,8 @@ typedef struct
     pthread_mutex_t mutex;
 
     int playingTime; // ms
-    int retimedHz; // nonzero while the UI output is retimed for this file
+    int retimedHz;   // nonzero while the UI output is retimed for this file
 } PlayContext_t;
-
-// On-screen diagnostic line for field testing: each stage of playback
-// startup appends a checkpoint, so a photo of the screen shows exactly
-// how far the pipeline got and what the demuxer reported.
-static char media_debug[512];
-
-static void media_debug_add(const char *tag) {
-    size_t len = strlen(media_debug);
-    snprintf(media_debug + len, sizeof(media_debug) - len, "%s ", tag);
-}
-
-const char *media_get_debug(void) {
-    return media_debug;
-}
 
 static int play_start(PlayContext_t *playCtx) {
     int ret = vdec2vo_start(playCtx->vv);
@@ -185,7 +171,6 @@ void *thread_media(void *params) {
         }
         pthread_mutex_unlock(&playCtx->mutex);
 
-
         // if(media->is_media_thread_exit)
         //     LOGI("is_media_thread_exit = 2");
 
@@ -252,100 +237,57 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         goto failed;
     }
 
-#if PLAY_HDZERO && (defined(HDZGOGGLE) || defined(HDZGOGGLE2))
-    {
-        // MP4 pre-switch: the mp4 pipeline cannot survive a display mode
-        // change while it exists (field-proven three ways). A 90fps TS
-        // proves the pipeline family runs fine under 720p90, so switch
-        // the display BEFORE anything is created and let the pipeline be
-        // born under the stable mode. The frame rate is read by parsing
-        // the mp4 boxes directly (mp4probe) - the vendor demuxer is not
-        // touched until the single real open below, because a quick
-        // open/probe/close/reopen of the vendor demuxer is itself
-        // suspected of breaking the second open (iteration 3).
-        size_t const pfnlen = strlen(filename);
-        bool const p_is_ts = pfnlen >= 3 && strcasecmp(filename + pfnlen - 3, ".ts") == 0;
-        media_debug[0] = 0;
-        if (!p_is_ts) {
-            int const pfps = mp4probe_fps(filename);
-            char dbg[64];
-            snprintf(dbg, sizeof(dbg), "probe:mp4 fps=%d", pfps);
-            media_debug_add(dbg);
-            if (pfps >= 80) {
-                playCtx->retimedHz = 90;
-            } else if (pfps >= 55) {
-                playCtx->retimedHz = 60;
-            }
-            if (playCtx->retimedHz) {
-                LOGD("pre-retiming display to %dHz for %dfps mp4", playCtx->retimedHz, pfps);
-                snprintf(dbg, sizeof(dbg), "retime>%dHz", playCtx->retimedHz);
-                media_debug_add(dbg);
-                Display_UI_SetRefresh(playCtx->retimedHz);
-                usleep(400 * 1000); // let the panel settle before the pipeline is born
-                media_debug_add("settled");
-            }
-        } else {
-            media_debug_add("probe:ts");
-        }
-    }
-#endif
-
     playCtx->dmx = awdmx_open(filename, play_onDemuxEof, playCtx);
     if (playCtx->dmx == NULL) {
         LOGE("open demux failed");
-        media_debug_add("dmx:FAIL");
         goto failed;
     } else {
-        {
-            char dbg[96];
-            snprintf(dbg, sizeof(dbg), "dmx:OK v=%d a=%d codec=%d %dx%d fpsX1000=%d",
-                     playCtx->dmx->videoNum, playCtx->dmx->audioNum,
-                     (int)playCtx->dmx->codecType, playCtx->dmx->width,
-                     playCtx->dmx->height, playCtx->dmx->fpsX1000);
-            media_debug_add(dbg);
-        }
         Vdec2VoParams_t vvParams;
         int voWidth = VO_WIDTH;
         int voHeight = VO_HEIGHT;
-        if (playCtx->retimedHz == 90) { // pre-retimed mp4 probe path
-            voWidth = 1280;
-            voHeight = 720;
-        }
         memset(&vvParams, 0, sizeof(vvParams));
 
 #if PLAY_HDZERO && (defined(HDZGOGGLE) || defined(HDZGOGGLE2))
-        // The menu UI drives the panel at 1080p50, which drops frames of
-        // 60/90fps DVR files unevenly; retime for the duration of
-        // playback. 90fps TS files switch to true 720p90 (every frame
-        // shown) using the vdpo timing, clock phases and MFPGA setup from
-        // the live race-mode path; everything else retimes to 1080p60 on
-        // the same 148.5MHz pixel clock (90fps then lands in an even 3:2
-        // pulldown).
-        //
-        // The 720p90 mode is TS-only on purpose: the earlier "720p90
-        // black-screens" reports coincided with MP4 recordings, which
-        // black-screen for a container reason of their own (90kHz mp4
-        // timescale, since fixed) - MP4 stays on the proven 1080p60 path.
         size_t const fnlen = strlen(filename);
         bool const is_ts = fnlen >= 3 && strcasecmp(filename + fnlen - 3, ".ts") == 0;
         int fps = (playCtx->dmx->fpsX1000 + 500) / 1000;
-        // TS: retime immediately as always (proven). MP4: the display was
-        // already switched BEFORE this demux was opened (see the probe
-        // pass above) - the mp4 pipeline is born under a stable display
-        // mode and never experiences a transition.
-        if (is_ts) {
-            if (fps >= 80) {
-                playCtx->retimedHz = 90;
-                voWidth = 1280;
-                voHeight = 720;
-            } else if (fps >= 55) {
-                playCtx->retimedHz = 60;
-            }
-            if (playCtx->retimedHz) {
-                LOGD("retiming display to %dHz for %dfps file", playCtx->retimedHz, fps);
-                Display_UI_SetRefresh(playCtx->retimedHz);
+        if (fps == 0 && is_ts) {
+            // The platform demuxer reports 0 fps for TS streams without
+            // embedded timing info - which is every goggle race
+            // recording; derive the frame rate from the PTS spacing.
+            int const probed = ts_probe_fps_x1000(filename);
+            if (probed > 0) {
+                fps = (probed + 500) / 1000;
+                LOGI("ts fps probe: %d mfps", probed);
             }
         }
+        LOGI("playback: %dx%d demux %d mfps -> fps %d, %s", playCtx->dmx->width,
+             playCtx->dmx->height, playCtx->dmx->fpsX1000, fps, is_ts ? "ts" : "not ts");
+#if defined(HDZGOGGLE2)
+        // Play 60/90fps TS recordings through the live-video display path
+        // instead of the 1080p50 menu timing, which drops their frames
+        // unevenly. Bench-verified on goggles2 hardware: the FPGA's UI
+        // path only ever locks 1080p50, but the video path (FPGA video
+        // input, decoded video riding the vdpo overlay plane over the VRX
+        // mute raster) displays 1080p60 pixel-perfectly and locks 720p90.
+        // The 720p90 mode scans out a 1280x720 raster, so the VO layer
+        // must be sized to match - and 90fps recordings are the 540p/720p
+        // race modes by definition, so a misdetected 1080p file must not
+        // land there. TS-only: MP4s have a black-screen history of their
+        // own and stay on the stock path. The G1 video path is not yet
+        // hardware-verified; its bench remains for that.
+        if (is_ts && fps >= 80 && playCtx->dmx->height <= 720) {
+            playCtx->retimedHz = 90;
+            voWidth = 1280;
+            voHeight = 720;
+        } else if (is_ts && fps >= 55) {
+            playCtx->retimedHz = 60;
+        }
+        if (playCtx->retimedHz) {
+            LOGI("retiming display to %dHz for %dfps file", playCtx->retimedHz, fps);
+            Display_Playback_SetMode(playCtx->retimedHz);
+        }
+#endif
 #endif
 
         vvParams.initRotation = 0;
@@ -380,11 +322,9 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
     }
     if (ret != 0) {
         LOGE("prepare vdec2vo failed");
-        media_debug_add("prepare:FAIL");
         goto failed;
     }
 
-    media_debug_add("prepared ready");
     LOGE("ready to play");
     media->is_media_thread_exit = false;
     ret = pthread_create(&pid, NULL, thread_media, (void *)media);
@@ -399,13 +339,19 @@ failed:
     vdec2vo_deinitSys(playCtx->vv);
     awdmx_close(playCtx->dmx);
     if (playCtx->retimedHz) {
-        Display_UI_SetRefresh(0);
+        Display_Playback_SetMode(0);
     }
     pthread_mutex_destroy(&playCtx->mutex);
     free(playCtx);
     LOGD("exit done");
 
     return NULL;
+}
+
+int media_retimed_hz(media_t *media) {
+    if (!media)
+        return 0;
+    return ((PlayContext_t *)media->context)->retimedHz;
 }
 
 void media_exit(media_t *media) {
@@ -419,7 +365,7 @@ void media_exit(media_t *media) {
     vdec2vo_deinitSys(playCtx->vv);
     awdmx_close(playCtx->dmx);
     if (playCtx->retimedHz) {
-        Display_UI_SetRefresh(0);
+        Display_Playback_SetMode(0);
     }
     pthread_mutex_destroy(&playCtx->mutex);
     free(media->context);

@@ -8,6 +8,7 @@
 
 #include "../conf/ui.h"
 #include "common.hh"
+#include "driver/hardware.h"
 #include "player/media.h"
 #include "record/record_definitions.h"
 #include "ui/ui_style.h"
@@ -32,6 +33,23 @@ static size_t stars_timestamps_s[MAX_STARS] = {
     0,
 };
 
+// Display bring-up bench readout (see Display_UI_BenchNext). The label is
+// only readable when the recipe under test actually displays - which is
+// exactly the signal the bench is after.
+static lv_obj_t *bench_label = NULL;
+
+static void bench_show(int idx, const char *desc) {
+    char text[96];
+
+    if (idx < 0 || !bench_label)
+        return;
+
+    snprintf(text, sizeof(text),
+             "Display test %d: %s\nright click = next, hold = restore", idx, desc);
+    lv_label_set_text(bench_label, text);
+    lv_obj_clear_flag(bench_label, LV_OBJ_FLAG_HIDDEN);
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 static void time2str(uint32_t t1, uint32_t t2, char *s) {
     int m1, s1, m2, s2;
@@ -46,25 +64,6 @@ static void time2str(uint32_t t1, uint32_t t2, char *s) {
 void mplayer_set_time(uint32_t now, uint32_t duration) {
     controller.value = (int32_t)now;
     controller.range = (int32_t)duration;
-}
-
-static lv_obj_t *play_error_label = NULL;
-static lv_obj_t *play_debug_label = NULL;
-
-static void show_play_debug(void) {
-    if (!play_debug_label) {
-        play_debug_label = lv_label_create(lv_scr_act());
-        lv_obj_set_style_text_font(play_debug_label, &lv_font_montserrat_16, 0);
-        lv_obj_set_style_text_color(play_debug_label, lv_color_make(255, 255, 0), 0);
-        lv_obj_set_style_bg_color(play_debug_label, lv_color_black(), 0);
-        lv_obj_set_style_bg_opa(play_debug_label, LV_OPA_70, 0);
-        lv_obj_set_style_pad_all(play_debug_label, 4, 0);
-        lv_label_set_long_mode(play_debug_label, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(play_debug_label, 900);
-        lv_obj_set_pos(play_debug_label, 40, 40);
-    }
-    lv_label_set_text(play_debug_label, media_get_debug());
-    lv_obj_move_foreground(play_debug_label);
 }
 
 static void update_time_label(bool mediaOK) {
@@ -191,10 +190,21 @@ static void init_mplayer() {
     controller.enable = true;
     controller.is_playing = true;
     controller.value = controller.range = 0;
+
+    bench_label = lv_label_create(controller.bg);
+    lv_label_set_text(bench_label, "");
+    lv_obj_set_style_text_font(bench_label, &lv_font_montserrat_26, 0);
+    lv_obj_set_style_text_color(bench_label, lv_color_make(255, 255, 255), 0);
+    lv_obj_set_style_bg_color(bench_label, lv_color_make(0, 0, 0), 0);
+    lv_obj_set_style_bg_opa(bench_label, LV_OPA_70, 0);
+    lv_obj_set_style_pad_all(bench_label, 8, 0);
+    lv_obj_set_pos(bench_label, 20, 20);
+    lv_obj_add_flag(bench_label, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void free_mplayer() {
     controller.enable = false;
+    bench_label = NULL; // child of controller.bg, freed with it
     lv_obj_del(controller._btn);
     lv_obj_del(controller._label);
     lv_obj_del(controller._slider);
@@ -255,6 +265,18 @@ uint8_t mplayer_on_key(uint8_t key) {
 
         media_seek(controller.value);
         break;
+
+    case RIGHT_KEY_CLICK: {
+        const char *desc = NULL;
+        bench_show(Display_UI_BenchNext(&desc), desc);
+        break;
+    }
+
+    case RIGHT_KEY_PRESS: {
+        const char *desc = NULL;
+        bench_show(Display_UI_BenchRestore(&desc), desc);
+        break;
+    }
     }
 
     update_mplayer();
@@ -278,12 +300,6 @@ static void notify_cb(media_info_t *info) {
 
     pthread_mutex_lock(&lvgl_mutex);
     update_time_label(true);
-    {
-        static char dbg[600];
-        snprintf(dbg, sizeof(dbg), "%s | t=%dms", media_get_debug(), info->playing_time);
-        if (play_debug_label)
-            lv_label_set_text(play_debug_label, dbg);
-    }
     lv_timer_handler();
     pthread_mutex_unlock(&lvgl_mutex);
 }
@@ -311,6 +327,7 @@ void load_stars(char *fname) {
     }
 }
 
+static lv_obj_t *play_error_label = NULL;
 
 void media_init(char *fname) {
     media = media_instantiate(fname, notify_cb);
@@ -383,19 +400,23 @@ void mplayer_file(char *fname) {
     load_stars(fname);
     init_mplayer();
     media_init(fname);
-    show_play_debug();
+    if (media_retimed_hz(media) == 90) {
+        // the 720p90 display mode scans out the top-left 1280x720 of the
+        // layout; move the control bar up into the visible window
+        lv_obj_set_pos(controller.bar, (1280 - UI_MPLAYER_CB_WIDTH) >> 1, 720 - 160);
+    }
     media_start();
     update_mplayer();
 }
 
 void mplayer_exit() {
+    // never leave a bench display mode running outside the player
+    const char *desc = NULL;
+    Display_UI_BenchRestore(&desc);
+
     if (play_error_label) {
         lv_obj_del(play_error_label);
         play_error_label = NULL;
-    }
-    if (play_debug_label) {
-        lv_obj_del(play_debug_label);
-        play_debug_label = NULL;
     }
     pthread_mutex_unlock(&lvgl_mutex);
     if (media) {

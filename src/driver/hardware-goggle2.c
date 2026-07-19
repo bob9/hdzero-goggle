@@ -569,51 +569,44 @@ void Display_UI() {
     pthread_mutex_unlock(&hardware_mutex);
 }
 
-// Retime the UI output for DVR playback. 60Hz keeps the 1080p UI on the
-// same 148.5MHz pixel clock, so the OLED and FPGA settings from
-// Display_UI_init stay valid. 90Hz mirrors the live 720p90 path
-// (Display_720P90_t) — vdpo timing, clock phases, FPGA input mode and MFPGA
-// timing registers — but keeps the FPGA input on the UI (no VO switch, no
-// VRX involvement). 0 restores the stock menu timing with a full
-// Display_UI_init.
-void Display_UI_SetRefresh(int hz) {
-    int tmg = (hz == 90) ? VDPO_TMG_720P90 : (hz == 60) ? VDPO_TMG_1080P60 : VDPO_TMG_1080P50;
+// The DVR playback display bench (see hardware-goggle.c) served its purpose
+// here: goggles2 findings are hardware-verified and shipped as
+// Display_Playback_SetMode below. Key facts, so nobody re-treads the dead
+// end: the FPGA's UI input path (reg 0x20=0) only ever locks 1080p50 - even
+// a bare vdpo switch to 1080p60 goes black regardless of FPGA/MFPGA/vtmg
+// configuration. The live-video path (reg 0x20=1) is the way: the decoded
+// video rides the vdpo overlay plane over the VRX mute raster (pure black
+// 0x000000 chroma-keys through, which is why OSD widgets use 0x010101).
+int Display_UI_BenchNext(const char **desc) {
+    (void)desc;
+    return -1;
+}
 
+int Display_UI_BenchRestore(const char **desc) {
+    (void)desc;
+    return -1;
+}
+
+void Display_720P90_t(int mode);
+void Display_1080P30_t(int mode);
+
+// Playback display modes, hardware-verified (9.5.11 bench, 9.5.12 field):
+// 1080p60 pixel-perfect; 720p90 needs the VO layer sized 1280x720 and shows
+// the top-left 1280x720 of the UI layout. Baseband stays off - the VRX mute
+// raster behind the vdpo overlay is all the video input the FPGA needs.
+void Display_Playback_SetMode(int hz) {
     pthread_mutex_lock(&hardware_mutex);
-    if ((g_hw_stat.source_mode == SOURCE_MODE_UI) && (g_hw_stat.vdpo_tmg != tmg)) {
-        screen.display(0);
+    screen.display(0);
 
-        if (hz == 90) {
-            I2C_Write(ADDR_FPGA, 0x8C, 0x00);
+    Display_UI_init();
+    if (hz == 90)
+        Display_720P90_t(VR_540P90);
+    else if (hz == 60)
+        Display_1080P30_t(VR_1080P30);
 
-            system_exec("dispw -s vdpo 720p90");
-            g_hw_stat.vdpo_tmg = VDPO_TMG_720P90;
-            system_exec("aww 0x0300b340 0x00000008");
-            vclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P90, 0);
-            pclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P90);
-            I2C_Write(ADDR_FPGA, 0x80, 0x03);
-
-            screen.mfpga.set720p90(VR_540P90);
-            screen.vtmg(1);
-
-            I2C_Write(ADDR_FPGA, 0xa7, 0x01);
-            I2C_Write(ADDR_FPGA, 0x8C, 0x01);
-            system_exec("aww 0x0300b084 0x00003fff"); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
-            system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
-        } else if (hz == 60) {
-            system_exec("dispw -s vdpo 1080p60");
-            g_hw_stat.vdpo_tmg = VDPO_TMG_1080P60;
-            system_exec("aww 0x0300b340 0x00000008");
-            system_exec("aww 0x0300b084 0x00003fff"); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
-            system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
-        } else {
-            Display_UI_init();
-        }
-
-        screen.display(1);
-        LOGI("Display_UI_SetRefresh: %dHz", hz ? hz : 50);
-    }
+    screen.display(1);
     pthread_mutex_unlock(&hardware_mutex);
+    LOGI("Display_Playback_SetMode: %dHz", hz ? hz : 50);
 }
 
 void Display_720P60_50_t(int mode, uint8_t is_43) // fps: 0=50, 1=60

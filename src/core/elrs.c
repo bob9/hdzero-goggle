@@ -35,6 +35,27 @@
 #include "ui/page_scannow.h"
 #include "ui/page_version.h"
 
+#ifdef __APPLE__
+// Emulator-on-macOS compat: no <endian.h> and no unnamed-semaphore timedwait
+#include <libkern/OSByteOrder.h>
+#define le16toh(x) OSSwapLittleToHostInt16(x)
+static int sem_timedwait(sem_t *sem, const struct timespec *abs_timeout) {
+    struct timespec now;
+    for (;;) {
+        if (sem_trywait(sem) == 0) {
+            return 0;
+        }
+        clock_gettime(CLOCK_REALTIME, &now);
+        if (now.tv_sec > abs_timeout->tv_sec ||
+            (now.tv_sec == abs_timeout->tv_sec && now.tv_nsec >= abs_timeout->tv_nsec)) {
+            errno = ETIMEDOUT;
+            return -1;
+        }
+        usleep(1000);
+    }
+}
+#endif
+
 static mspState_e input_state;
 static uint16_t offset;
 static uint8_t input_buffer[MSP_PORT_INBUF_SIZE];
@@ -524,14 +545,19 @@ bool elrs_headtracking_enabled() {
     return headtracking_enabled;
 }
 
-void msp_channel_update() {
+bool msp_channel_update() {
     // Channel 1...20 for R1...8, E1, F1, F2 and F4, L1...8
     uint8_t const ch = g_setting.scan.channel;
     uint8_t const band = g_setting.source.hdzero_band;
     uint8_t chan;
 
+    // VTX Control is the master switch for transmitting channel changes
+    // to the drone - with it off no path may send.
+    if (!g_setting.elrs.vtx_send_enable)
+        return false;
+
     if (ch == 0 || ch > HDZERO_CHANNEL_NUM)
-        return; // Invalid value -> ignore
+        return false; // Invalid value -> ignore
     if (band == SETTING_SOURCES_HDZERO_BAND_RACEBAND) {
         if (ch <= 8) {
             chan = ch - 1 + (4 * 8); // Map R1..8
@@ -549,14 +575,15 @@ void msp_channel_update() {
     }
     msp_send_packet(MSP_SET_BAND_CHAN, MSP_PACKET_COMMAND, sizeof(chan), &chan);
     LOGI("MSPv2 MSP_SET_BAND_CHAN %d sent", chan);
+    return true;
 }
 
-bool msp_channel_update_auto() {
-    if (g_setting.elrs.enable && g_setting.elrs.auto_send_vtx) {
-        msp_channel_update();
-        return true;
+// Re-send the current VTX channel to the backpack and show the
+// "VTX SENT" OSD confirmation. Assignable to a button on the Input page.
+void elrs_send_vtx() {
+    if (msp_channel_update()) {
+        channel_osd_sent = CHANNEL_SHOWTIME;
     }
-    return false;
 }
 
 void elrs_clear_osd() {
