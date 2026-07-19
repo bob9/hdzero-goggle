@@ -408,9 +408,17 @@ void mplayer_file(char *fname) {
         lv_obj_set_style_opa(controller.bar, LV_OPA_COVER, 0);
     }
     if (retimed == 90) {
+#if defined(HDZGOGGLE)
+        // The G1 panel conversion for this mode is 540-line based and
+        // shows less of the raster vertically than goggles2 - a bar at
+        // y=560 falls off the bottom while video still fills the screen.
+        // Park it in the top-left region the bench label proved visible.
+        lv_obj_set_pos(controller.bar, 20, 430);
+#else
         // the 720p90 display mode scans out the top-left 1280x720 of the
         // layout; move the control bar up into the visible window
         lv_obj_set_pos(controller.bar, (1280 - UI_MPLAYER_CB_WIDTH) >> 1, 720 - 160);
+#endif
     }
     media_start();
     update_mplayer();
