@@ -265,13 +265,16 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         int fps = (playCtx->dmx->fpsX1000 + 500) / 1000;
         if (fps == 0 && is_ts) {
             // The platform demuxer reports 0 fps for TS streams without
-            // embedded timing info, which would silently skip the retime
-            // and play with the stock-50Hz judder; measure the frame rate
-            // from the PTS spacing instead.
+            // embedded timing info. Field evidence (goggles2, genuine
+            // 720p90 race recording): forcing the retime from a probed
+            // fps black-screens - the UI-sourced 720p90 display path has
+            // never actually run for such files, the demuxer gap was
+            // hiding it. Until that path is brought up on hardware, the
+            // probe is diagnostic only: log the real fps, keep the
+            // stock (working, 50Hz) display path.
             int const probed = ts_probe_fps_x1000(filename);
             if (probed > 0) {
-                fps = (probed + 500) / 1000;
-                LOGI("ts fps probe: %d mfps", probed);
+                LOGI("ts fps probe: %d mfps (diagnostic only, no retime)", probed);
             }
         }
         LOGI("playback: %dx%d demux %d mfps -> fps %d, %s", playCtx->dmx->width,
