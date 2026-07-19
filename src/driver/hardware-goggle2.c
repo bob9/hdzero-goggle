@@ -616,65 +616,66 @@ void Display_UI_SetRefresh(int hz) {
     pthread_mutex_unlock(&hardware_mutex);
 }
 
-// ---- DVR display bring-up bench --------------------------------------------
-// The FPGA between the SoC vdpo output and the OLEDs has no public register
-// documentation, so which write set lets the *UI* input path (reg 0x20=0)
-// run at 720p90 or 1080p60 can only be found on hardware. Every recipe
-// rebuilds the stock 1080p50 UI first, then layers on one more piece of the
-// live-video 720p90 path (known-good end to end, but normally driven from
-// the FPGA's video input): R1-R7 climb that ladder in the live path's write
-// order, R8/R9 try the two 1080p60 variants. Stepped from the playback
-// screen with the right button; recipe 0 always restores a working screen.
+// ---- DVR display bring-up bench (generation 2) -----------------------------
+// Generation 1 established on hardware that the FPGA's UI input path (reg
+// 0x20=0) only produces a picture at 1080p50 - even a bare vdpo switch to
+// 1080p60 with no other change goes black, and no amount of live-path FPGA
+// configuration helps. So these recipes take the opposite route: enter the
+// *genuine* live-video display mode (FPGA video input, reg 0x20=1), which
+// provably runs at 720p90/1080p60/720p60 every day, and let the playback
+// video ride in on the vdpo overlay plane. The VRX contributes only its
+// mute raster (or nothing, BB-off variants); overlay pixels that are pure
+// black chroma-key through to it, which is why OSD widgets use 0x010101
+// backgrounds. Stepped from the playback screen with the right button;
+// recipe 0 always restores a working screen.
+void Display_720P90_t(int mode);
+void Display_1080P30_t(int mode);
+void Display_720P60_50_t(int mode, uint8_t is_43);
+
 static int bench_idx = 0;
+static bool bench_opened_bb = false;
 
 static const char *const bench_desc[] = {
-    "stock 1080p50",
-    "720p90 vdpo+vtmg1",
-    "720p90 +clk phases",
-    "720p90 +fpga 0x80",
-    "720p90 +mfpga scaler",
-    "720p90 +0xa7",
-    "720p90 +0x8C run",
-    "720p90 +vo strobe",
-    "1080p60 vdpo only",
-    "1080p60 +vtmg2",
+    "stock 1080p50 UI",
+    "video path 720p90",
+    "video path 720p90 +BB",
+    "video path 1080p60",
+    "video path 1080p60 +BB",
+    "video path 720p60 +BB",
 };
 #define BENCH_RECIPES (int)(sizeof(bench_desc) / sizeof(bench_desc[0]))
 
 static void bench_apply(int idx) {
+    bool const wants_bb = (idx == 2) || (idx == 4) || (idx == 5);
+
     pthread_mutex_lock(&hardware_mutex);
     screen.display(0);
 
     Display_UI_init(); // deterministic 1080p50 baseline for every recipe
 
-    if (idx >= 1 && idx <= 7) { // 720p90 ladder
-        system_exec("dispw -s vdpo 720p90");
-        g_hw_stat.vdpo_tmg = VDPO_TMG_720P90;
-        system_exec("aww 0x0300b340 0x00000008");
-        if (idx >= 2) {
-            vclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P90, 0);
-            pclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P90);
-        }
-        if (idx >= 3)
-            I2C_Write(ADDR_FPGA, 0x80, 0x03);
-        if (idx >= 4)
-            screen.mfpga.set720p90(VR_540P90);
-        screen.vtmg(1);
-        if (idx >= 5)
-            I2C_Write(ADDR_FPGA, 0xa7, 0x01);
-        if (idx >= 6)
-            I2C_Write(ADDR_FPGA, 0x8C, 0x01);
-        if (idx >= 7)
-            Display_VO_SWITCH(0);
-        system_exec("aww 0x0300b084 0x00003fff"); // vdpo clock drive strength
-        system_exec("aww 0x06542018 0x00000044"); // no horizontal chroma FIR
-    } else if (idx >= 8) { // 1080p60 variants
-        system_exec("dispw -s vdpo 1080p60");
-        g_hw_stat.vdpo_tmg = VDPO_TMG_1080P60;
-        if (idx == 9)
-            screen.vtmg(2);
-        system_exec("aww 0x0300b084 0x00003fff");
-        system_exec("aww 0x06542018 0x00000044");
+    if (bench_opened_bb && !wants_bb) {
+        HDZero_Close();
+        bench_opened_bb = false;
+    }
+    if (wants_bb && !g_hw_stat.hdzero_open) {
+        HDZero_open(g_setting.source.hdzero_bw);
+        bench_opened_bb = true;
+    }
+
+    switch (idx) {
+    case 1:
+    case 2:
+        Display_720P90_t(VR_540P90);
+        break;
+    case 3:
+    case 4:
+        Display_1080P30_t(VR_1080P30);
+        break;
+    case 5:
+        Display_720P60_50_t(VR_720P60, 0);
+        break;
+    default:
+        break; // recipe 0: the Display_UI_init baseline is the recipe
     }
 
     screen.display(1);
