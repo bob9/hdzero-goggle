@@ -268,6 +268,43 @@ void rtc_init() {
 }
 
 /**
+ * Periodically persist the running clock to settings. On hardware whose
+ * RTC loses time at power-off (no working coin cell), the boot-time seed
+ * then restores "when the goggles were last running" instead of the last
+ * manually-set time - stale only by the powered-off duration. Call from
+ * the main loop; writes at most once per 5 minutes.
+ */
+void rtc_persist_tick() {
+    static time_t last_persist = 0;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
+    if (last_persist != 0 && now.tv_sec - last_persist < 300) {
+        return;
+    }
+    last_persist = now.tv_sec;
+
+    struct rtc_date rd;
+    rtc_get_clock(&rd);
+    if (rd.year <= 1970 || rtc_has_valid_date(&rd) != 0) {
+        return; // never persist an unset clock
+    }
+
+    g_setting.clock.year = rd.year;
+    g_setting.clock.month = rd.month;
+    g_setting.clock.day = rd.day;
+    g_setting.clock.hour = rd.hour;
+    g_setting.clock.min = rd.min;
+    g_setting.clock.sec = rd.sec;
+    ini_putl("clock", "year", rd.year, SETTING_INI);
+    ini_putl("clock", "month", rd.month, SETTING_INI);
+    ini_putl("clock", "day", rd.day, SETTING_INI);
+    ini_putl("clock", "hour", rd.hour, SETTING_INI);
+    ini_putl("clock", "min", rd.min, SETTING_INI);
+    ini_putl("clock", "sec", rd.sec, SETTING_INI);
+}
+
+/**
  *  Log current time to disk.
  */
 void rtc_timestamp() {
