@@ -271,13 +271,19 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
             int const probed = ts_probe_fps_x1000(filename);
             if (probed > 0) {
                 fps = (probed + 500) / 1000;
-                LOGD("ts fps probe: %d mfps", probed);
+                LOGI("ts fps probe: %d mfps", probed);
             }
         }
+        LOGI("playback: %dx%d demux %d mfps -> fps %d, %s", playCtx->dmx->width,
+             playCtx->dmx->height, playCtx->dmx->fpsX1000, fps, is_ts ? "ts" : "not ts");
         // TS-only for ALL retiming: MP4 playback goes down the exact stock
         // display path, as a candidate fix for MP4 black screens (and as a
         // bisect probe for whether the retime is what broke them)
-        if (fps >= 80 && is_ts) {
+        // 720p90 additionally requires <=720p content: the mode drives the
+        // panel pipeline at 1280x720, and 90fps recordings are the 540p/720p
+        // race modes by definition - a misdetected 1080p file must not land
+        // here (black screen).
+        if (fps >= 80 && is_ts && playCtx->dmx->height <= 720) {
             playCtx->retimedHz = 90;
             voWidth = 1280;
             voHeight = 720;
@@ -285,7 +291,7 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
             playCtx->retimedHz = 60;
         }
         if (playCtx->retimedHz) {
-            LOGD("retiming display to %dHz for %dfps file", playCtx->retimedHz, fps);
+            LOGI("retiming display to %dHz for %dfps file", playCtx->retimedHz, fps);
             Display_UI_SetRefresh(playCtx->retimedHz);
         }
 #endif
