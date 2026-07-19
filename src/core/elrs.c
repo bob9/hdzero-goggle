@@ -545,14 +545,19 @@ bool elrs_headtracking_enabled() {
     return headtracking_enabled;
 }
 
-void msp_channel_update() {
+bool msp_channel_update() {
     // Channel 1...20 for R1...8, E1, F1, F2 and F4, L1...8
     uint8_t const ch = g_setting.scan.channel;
     uint8_t const band = g_setting.source.hdzero_band;
     uint8_t chan;
 
+    // VTX Control is the master switch for transmitting channel changes
+    // to the drone - with it off no path may send.
+    if (!g_setting.elrs.vtx_send_enable)
+        return false;
+
     if (ch == 0 || ch > HDZERO_CHANNEL_NUM)
-        return; // Invalid value -> ignore
+        return false; // Invalid value -> ignore
     if (band == SETTING_SOURCES_HDZERO_BAND_RACEBAND) {
         if (ch <= 8) {
             chan = ch - 1 + (4 * 8); // Map R1..8
@@ -570,13 +575,15 @@ void msp_channel_update() {
     }
     msp_send_packet(MSP_SET_BAND_CHAN, MSP_PACKET_COMMAND, sizeof(chan), &chan);
     LOGI("MSPv2 MSP_SET_BAND_CHAN %d sent", chan);
+    return true;
 }
 
 // Re-send the current VTX channel to the backpack and show the
 // "VTX SENT" OSD confirmation. Assignable to a button on the Input page.
 void elrs_send_vtx() {
-    msp_channel_update();
-    channel_osd_sent = CHANNEL_SHOWTIME;
+    if (msp_channel_update()) {
+        channel_osd_sent = CHANNEL_SHOWTIME;
+    }
 }
 
 void elrs_clear_osd() {

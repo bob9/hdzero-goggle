@@ -175,14 +175,14 @@ void tune_channel(uint8_t action) {
                 // Only the deliberate long press sends the channel to the
                 // VTX; a click retunes the goggles alone, so previewing
                 // another pilot's channel can never retune your drone.
-                if (action == DIAL_KEY_PRESS) {
-                    msp_channel_update();
+                if (action == DIAL_KEY_PRESS && msp_channel_update()) {
                     channel_osd_sent = CHANNEL_SHOWTIME;
                 }
             } else if (action == DIAL_KEY_PRESS) {
                 // Long press on the current channel: re-send the VTX channel
-                msp_channel_update();
-                channel_osd_sent = CHANNEL_SHOWTIME;
+                if (msp_channel_update()) {
+                    channel_osd_sent = CHANNEL_SHOWTIME;
+                }
             }
         } else if (g_source_info.source == SOURCE_AV_MODULE) {
             if (g_setting.source.analog_channel != channel) {
@@ -190,8 +190,7 @@ void tune_channel(uint8_t action) {
                 ini_putl("source", "analog_channel", g_setting.source.analog_channel, SETTING_INI);
                 dvr_cmd(DVR_STOP);
                 rtc6715.set_ch(g_setting.source.analog_channel - 1);
-                if (action == DIAL_KEY_PRESS) {
-                    msp_channel_update();
+                if (action == DIAL_KEY_PRESS && msp_channel_update()) {
                     channel_osd_sent = CHANNEL_SHOWTIME;
                 }
             }
