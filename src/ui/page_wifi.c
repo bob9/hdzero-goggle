@@ -16,6 +16,7 @@
 #include "core/app_state.h"
 #include "core/common.hh"
 #include "core/dvr.h"
+#include "core/wifi.h"
 #include "lang/language.h"
 #include "ui/page_common.h"
 #include "ui/ui_attribute.h"
@@ -126,6 +127,46 @@ static lv_timer_t *page_wifi_apply_settings_pending_timer = NULL;
 static bool page_wifi_bootup_pending = true;
 
 /**
+ * Write the client mode wpa_supplicant configuration containing every
+ * remembered network so any known WiFi within range is joined automatically.
+ */
+static void page_wifi_write_sta_config() {
+    FILE *fp = fopen(WIFI_STA_CFG, "w");
+    if (!fp) {
+        return;
+    }
+
+    fprintf(fp, "ctrl_interface=/var/log/wpa_supplicant\n");
+    fprintf(fp, "update_config=1\n");
+
+    if (g_setting.wifi.net_count > 0) {
+        for (int i = 0; i < g_setting.wifi.net_count; i++) {
+            fprintf(fp, "network={\n");
+            fprintf(fp, "ssid=\"%s\"\n", g_setting.wifi.networks[i].ssid);
+            if (strlen(g_setting.wifi.networks[i].passwd)) {
+                fprintf(fp, "psk=\"%s\"\n", g_setting.wifi.networks[i].passwd);
+            } else {
+                fprintf(fp, "key_mgmt=NONE\n");
+            }
+            // Most recently used network wins when several are in range
+            fprintf(fp, "priority=%d\n", g_setting.wifi.net_count - i);
+            fprintf(fp, "}\n");
+        }
+    } else if (strlen(g_setting.wifi.ssid[WIFI_MODE_STA])) {
+        fprintf(fp, "network={\n");
+        fprintf(fp, "ssid=\"%s\"\n", g_setting.wifi.ssid[WIFI_MODE_STA]);
+        if (strlen(g_setting.wifi.passwd[WIFI_MODE_STA])) {
+            fprintf(fp, "psk=\"%s\"\n", g_setting.wifi.passwd[WIFI_MODE_STA]);
+        } else {
+            fprintf(fp, "key_mgmt=NONE\n");
+        }
+        fprintf(fp, "}\n");
+    }
+
+    fclose(fp);
+}
+
+/**
  * Refresh WiFi service configuration parameters.
  */
 static void page_wifi_update_services() {
@@ -221,15 +262,7 @@ static void page_wifi_update_services() {
         fclose(fp);
     }
 
-    if ((fp = fopen(WIFI_STA_CFG, "w"))) {
-        fprintf(fp, "ctrl_interface=/var/log/wpa_supplicant\n");
-        fprintf(fp, "update_config=1\n");
-        fprintf(fp, "network={\n");
-        fprintf(fp, "ssid=\"%s\"\n", g_setting.wifi.ssid[WIFI_MODE_STA]);
-        fprintf(fp, "psk=\"%s\"\n", g_setting.wifi.passwd[WIFI_MODE_STA]);
-        fprintf(fp, "}\n");
-        fclose(fp);
-    }
+    page_wifi_write_sta_config();
 
     if (g_setting.wifi.mode == WIFI_MODE_STA &&
         !g_setting.wifi.dhcp &&
@@ -316,6 +349,13 @@ static void page_wifi_update_settings() {
     ini_putl("wifi", "rf_channel", g_setting.wifi.rf_channel, SETTING_INI);
     ini_puts("wifi", "root_pw", g_setting.wifi.root_pw, SETTING_INI);
     settings_put_bool("wifi", "ssh", g_setting.wifi.ssh);
+
+    // Remember the client network so it is joined automatically from now on
+    if (g_setting.wifi.mode == WIFI_MODE_STA &&
+        strlen(g_setting.wifi.ssid[WIFI_MODE_STA])) {
+        wifi_networks_remember(g_setting.wifi.ssid[WIFI_MODE_STA],
+                               g_setting.wifi.passwd[WIFI_MODE_STA]);
+    }
 
     // Prepare WiFi interfaces
     if (!page_wifi_bootup_pending) {
@@ -650,6 +690,324 @@ static void page_wifi_update_dirty_flag() {
 }
 
 /**
+ * WiFi network scan & selection overlay (Client mode).
+ *
+ * Detected networks are listed automatically (remembered ones marked with *),
+ * with entries to fall back to manual SSID entry, forget saved networks or
+ * cancel. Navigation mirrors the virtual keyboard: dial scrolls, click
+ * selects, right button goes back.
+ */
+#define WIFI_SCAN_FIXED_ROWS 3
+#define WIFI_SCAN_MAX_ROWS   (WIFI_SCAN_ENTRIES_MAX + WIFI_SCAN_FIXED_ROWS)
+
+typedef struct {
+    bool active;
+    bool saved_view;
+    bool bootstrapped;
+    bool password_pending;
+    lv_obj_t *container;
+    lv_obj_t *title;
+    lv_obj_t *rows[WIFI_SCAN_MAX_ROWS];
+    int visible_rows;
+    int selected;
+    wifi_scan_entry_t entries[WIFI_SCAN_ENTRIES_MAX];
+    int entry_count;
+    lv_timer_t *timer;
+    uint32_t ticks;
+    uint32_t last_scan_tick;
+} wifi_scan_overlay_t;
+
+static wifi_scan_overlay_t page_wifi_scan = {0};
+
+static void page_wifi_scan_timer_cb(struct _lv_timer_t *timer);
+
+static void page_wifi_scan_create() {
+    if (page_wifi_scan.container) {
+        return;
+    }
+
+    lv_obj_t *cont = lv_obj_create(lv_scr_act());
+    page_wifi_scan.container = cont;
+    lv_obj_add_flag(cont, LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_size(cont, LV_PCT(42), LV_PCT(72));
+    lv_obj_align(cont, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(cont, lv_color_hex(0x101010), 0);
+    lv_obj_set_style_bg_opa(cont, LV_OPA_90, 0);
+    lv_obj_set_style_border_width(cont, 2, 0);
+    lv_obj_set_style_border_color(cont, lv_color_hex(0x454545), 0);
+    lv_obj_set_style_pad_all(cont, 12, 0);
+    lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scrollbar_mode(cont, LV_SCROLLBAR_MODE_AUTO);
+
+    page_wifi_scan.title = lv_label_create(cont);
+    lv_obj_set_style_text_font(page_wifi_scan.title, UI_PAGE_LABEL_FONT, 0);
+    lv_obj_set_style_text_color(page_wifi_scan.title, lv_color_hex(TEXT_COLOR_DEFAULT), 0);
+    lv_label_set_recolor(page_wifi_scan.title, true);
+    lv_obj_set_width(page_wifi_scan.title, LV_PCT(100));
+
+    for (int i = 0; i < WIFI_SCAN_MAX_ROWS; i++) {
+        lv_obj_t *row = lv_label_create(cont);
+        lv_obj_set_style_text_font(row, UI_PAGE_LABEL_FONT, 0);
+        lv_obj_set_style_text_color(row, lv_color_hex(TEXT_COLOR_DEFAULT), 0);
+        lv_label_set_recolor(row, true);
+        lv_obj_set_width(row, LV_PCT(100));
+        lv_obj_add_flag(row, LV_OBJ_FLAG_HIDDEN);
+        page_wifi_scan.rows[i] = row;
+    }
+}
+
+static void page_wifi_scan_set_row(int row, const char *text) {
+    char buf[160];
+    if (row == page_wifi_scan.selected) {
+        snprintf(buf, sizeof(buf), "#FFFF00 > %s#", text);
+    } else {
+        snprintf(buf, sizeof(buf), "   %s", text);
+    }
+    lv_label_set_text(page_wifi_scan.rows[row], buf);
+    lv_obj_clear_flag(page_wifi_scan.rows[row], LV_OBJ_FLAG_HIDDEN);
+}
+
+static void page_wifi_scan_render() {
+    char buf[128];
+    int row = 0;
+
+    if (!page_wifi_scan.saved_view) {
+        snprintf(buf, sizeof(buf), "%s %s",
+                 _lang("Select WiFi Network"),
+                 page_wifi_scan.entry_count ? "" : _lang("Searching"));
+        lv_label_set_text(page_wifi_scan.title, buf);
+
+        page_wifi_scan.visible_rows = page_wifi_scan.entry_count + WIFI_SCAN_FIXED_ROWS;
+        if (page_wifi_scan.selected >= page_wifi_scan.visible_rows) {
+            page_wifi_scan.selected = page_wifi_scan.visible_rows - 1;
+        }
+
+        for (int i = 0; i < page_wifi_scan.entry_count; i++) {
+            wifi_scan_entry_t *e = &page_wifi_scan.entries[i];
+            int pct = e->rssi >= -50 ? 100 : (e->rssi <= -100 ? 0 : 2 * (e->rssi + 100));
+            snprintf(buf, sizeof(buf), "%s%s  %d%%%s",
+                     e->saved ? "* " : "",
+                     e->ssid,
+                     pct,
+                     e->secured ? "" : " (open)");
+            page_wifi_scan_set_row(row++, buf);
+        }
+
+        snprintf(buf, sizeof(buf), "%s...", _lang("Enter SSID Manually"));
+        page_wifi_scan_set_row(row++, buf);
+        snprintf(buf, sizeof(buf), "%s...", _lang("Forget a Network"));
+        page_wifi_scan_set_row(row++, buf);
+        page_wifi_scan_set_row(row++, _lang("Cancel"));
+    } else {
+        snprintf(buf, sizeof(buf), "%s", _lang("Click a network to forget it"));
+        lv_label_set_text(page_wifi_scan.title, buf);
+
+        page_wifi_scan.visible_rows = g_setting.wifi.net_count + 1;
+        if (page_wifi_scan.selected >= page_wifi_scan.visible_rows) {
+            page_wifi_scan.selected = page_wifi_scan.visible_rows - 1;
+        }
+
+        for (int i = 0; i < g_setting.wifi.net_count; i++) {
+            page_wifi_scan_set_row(row++, g_setting.wifi.networks[i].ssid);
+        }
+        snprintf(buf, sizeof(buf), "< %s", _lang("Back"));
+        page_wifi_scan_set_row(row++, buf);
+    }
+
+    for (int i = row; i < WIFI_SCAN_MAX_ROWS; i++) {
+        lv_obj_add_flag(page_wifi_scan.rows[i], LV_OBJ_FLAG_HIDDEN);
+    }
+
+    lv_obj_scroll_to_view(page_wifi_scan.rows[page_wifi_scan.selected], LV_ANIM_OFF);
+}
+
+/**
+ * Bring the radio up far enough to scan; if remembered networks are in
+ * range wpa_supplicant will also join one right away.
+ */
+static void page_wifi_scan_bootstrap() {
+    // An active access point holds the radio; stop it before scanning
+    if (!page_wifi_bootup_pending &&
+        g_setting.wifi.enable &&
+        g_setting.wifi.mode == WIFI_MODE_AP) {
+        system_script(WIFI_OFF);
+    }
+
+    page_wifi_write_sta_config();
+
+    FILE *fp = fopen(WIFI_SCAN_ON, "w");
+    if (!fp) {
+        return;
+    }
+    fprintf(fp, "#!/bin/sh\n");
+    fprintf(fp, "insmod /mnt/app/ko/xradio_mac.ko\n");
+    fprintf(fp, "insmod /mnt/app/ko/xradio_core.ko\n");
+    fprintf(fp, "insmod /mnt/app/ko/xradio_wlan.ko\n");
+    fprintf(fp, "ifconfig wlan0 up\n");
+    fprintf(fp, "mkdir -p /var/log\n");
+    fprintf(fp, "if [ ! -e /var/log/wpa_supplicant/wlan0 ]; then\n");
+    fprintf(fp, "wpa_supplicant -Dnl80211 -iwlan0 -c/tmp/wpa_supplicant.conf&\n");
+    fprintf(fp, "fi\n");
+    fclose(fp);
+    system_exec("chmod +x " WIFI_SCAN_ON);
+    system_script(WIFI_SCAN_ON);
+}
+
+static void page_wifi_scan_open() {
+    page_wifi_scan_create();
+    page_wifi_scan.active = true;
+    page_wifi_scan.saved_view = false;
+    page_wifi_scan.bootstrapped = false;
+    page_wifi_scan.selected = 0;
+    page_wifi_scan.entry_count = 0;
+    page_wifi_scan.ticks = 0;
+    page_wifi_scan.last_scan_tick = 0;
+    lv_obj_clear_flag(page_wifi_scan.container, LV_OBJ_FLAG_HIDDEN);
+    page_wifi_scan_render();
+    page_wifi_scan.timer = lv_timer_create(page_wifi_scan_timer_cb, 500, NULL);
+    pp_wifi.p_arr.max = 0;
+}
+
+static void page_wifi_scan_close() {
+    if (!page_wifi_scan.active) {
+        return;
+    }
+    page_wifi_scan.active = false;
+    if (page_wifi_scan.timer) {
+        lv_timer_del(page_wifi_scan.timer);
+        page_wifi_scan.timer = NULL;
+    }
+    lv_obj_add_flag(page_wifi_scan.container, LV_OBJ_FLAG_HIDDEN);
+    pp_wifi.p_arr.max = page_wifi_get_current_page_max();
+}
+
+static void page_wifi_scan_timer_cb(struct _lv_timer_t *timer) {
+    if (!page_wifi_scan.active || page_wifi_scan.saved_view) {
+        return;
+    }
+
+    page_wifi_scan.ticks++;
+
+    if (!wifi_wpa_alive()) {
+        if (!page_wifi_scan.bootstrapped) {
+            page_wifi_scan.bootstrapped = true;
+            page_wifi_scan_bootstrap();
+        }
+        return;
+    }
+    page_wifi_scan.bootstrapped = true;
+
+    // Rescan every ~8 seconds while the overlay is up
+    if (page_wifi_scan.last_scan_tick == 0 ||
+        page_wifi_scan.ticks - page_wifi_scan.last_scan_tick >= 16) {
+        wifi_scan_trigger();
+        page_wifi_scan.last_scan_tick = page_wifi_scan.ticks;
+    }
+
+    int count = wifi_scan_results(page_wifi_scan.entries, WIFI_SCAN_ENTRIES_MAX);
+    if (count >= 0) {
+        page_wifi_scan.entry_count = count;
+        page_wifi_scan_render();
+    }
+}
+
+static void page_wifi_scan_scroll(uint8_t key) {
+    if (page_wifi_scan.visible_rows <= 0) {
+        return;
+    }
+    if (key == DIAL_KEY_UP) {
+        page_wifi_scan.selected++;
+        if (page_wifi_scan.selected >= page_wifi_scan.visible_rows) {
+            page_wifi_scan.selected = 0;
+        }
+    } else {
+        page_wifi_scan.selected--;
+        if (page_wifi_scan.selected < 0) {
+            page_wifi_scan.selected = page_wifi_scan.visible_rows - 1;
+        }
+    }
+    page_wifi_scan_render();
+}
+
+static void page_wifi_scan_select() {
+    int sel = page_wifi_scan.selected;
+
+    if (page_wifi_scan.saved_view) {
+        if (sel < g_setting.wifi.net_count) {
+            bool was_current =
+                0 == strcmp(g_setting.wifi.networks[sel].ssid,
+                            page_wifi.page_1.ssid.text[WIFI_MODE_STA]);
+            wifi_networks_forget(sel);
+
+            if (was_current) {
+                page_wifi.page_1.ssid.text[WIFI_MODE_STA][0] = '\0';
+                page_wifi.page_1.passwd.text[WIFI_MODE_STA][0] = '\0';
+                g_setting.wifi.ssid[WIFI_MODE_STA][0] = '\0';
+                g_setting.wifi.passwd[WIFI_MODE_STA][0] = '\0';
+                ini_puts("wifi", "sta_ssid", "", SETTING_INI);
+                ini_puts("wifi", "sta_passwd", "", SETTING_INI);
+                if (btn_group_get_sel(&page_wifi.page_1.mode.button) == WIFI_MODE_STA) {
+                    lv_label_set_text(page_wifi.page_1.ssid.input, "");
+                    page_wifi_mask_password(page_wifi.page_1.passwd.input, 0);
+                }
+            }
+
+            // Stop auto-joining the forgotten network right away
+            page_wifi_write_sta_config();
+            wifi_reconfigure();
+            page_wifi_scan_render();
+        } else {
+            page_wifi_scan.saved_view = false;
+            page_wifi_scan.selected = 0;
+            page_wifi_scan_render();
+        }
+        return;
+    }
+
+    if (sel < page_wifi_scan.entry_count) {
+        wifi_scan_entry_t *entry = &page_wifi_scan.entries[sel];
+        snprintf(page_wifi.page_1.ssid.text[WIFI_MODE_STA], WIFI_SSID_MAX, "%s", entry->ssid);
+        lv_label_set_text(page_wifi.page_1.ssid.input, entry->ssid);
+        page_wifi.page_1.ssid.dirty =
+            (0 != strcmp(entry->ssid, g_setting.wifi.ssid[WIFI_MODE_STA]));
+
+        int saved = wifi_networks_find(entry->ssid);
+        if (saved >= 0 || !entry->secured) {
+            // Known network (or open one): the password is already at hand
+            snprintf(page_wifi.page_1.passwd.text[WIFI_MODE_STA], WIFI_PASSWD_MAX, "%s",
+                     saved >= 0 ? g_setting.wifi.networks[saved].passwd : "");
+            page_wifi_mask_password(page_wifi.page_1.passwd.input,
+                                    strlen(page_wifi.page_1.passwd.text[WIFI_MODE_STA]));
+            page_wifi.page_1.passwd.dirty =
+                (0 != strcmp(page_wifi.page_1.passwd.text[WIFI_MODE_STA],
+                             g_setting.wifi.passwd[WIFI_MODE_STA]));
+            page_wifi_scan_close();
+        } else {
+            // New network: ask for its password
+            page_wifi_scan_close();
+            page_wifi_scan.password_pending = true;
+            keyboard_set_text("");
+            keyboard_open();
+            pp_wifi.p_arr.max = 0;
+        }
+        page_wifi_update_dirty_flag();
+    } else if (sel == page_wifi_scan.entry_count) {
+        // Manual SSID entry
+        page_wifi_scan_close();
+        page_wifi.item_select = 3;
+        keyboard_set_text(page_wifi.page_1.ssid.text[WIFI_MODE_STA]);
+        keyboard_open();
+        pp_wifi.p_arr.max = 0;
+    } else if (sel == page_wifi_scan.entry_count + 1) {
+        page_wifi_scan.saved_view = true;
+        page_wifi_scan.selected = 0;
+        page_wifi_scan_render();
+    } else {
+        page_wifi_scan_close();
+    }
+}
+
+/**
  * Page 1 contains basic settings.
  */
 static void page_wifi_create_page_1(lv_obj_t *parent) {
@@ -791,6 +1149,9 @@ static void page_wifi_enter() {
  * Main exit routine for this page.
  */
 static void page_wifi_exit() {
+    page_wifi_scan_close();
+    page_wifi_scan.password_pending = false;
+
     btn_group_set_sel(&page_wifi.page_select.button, 0);
     page_wifi_update_current_page(0);
 
@@ -846,6 +1207,12 @@ static void page_wifi_on_update(uint32_t delta_ms) {
  * Main navigation routine for this page.
  */
 static void page_wifi_on_roller(uint8_t key) {
+    // Scroll through the WiFi selection overlay
+    if (page_wifi_scan.active) {
+        page_wifi_scan_scroll(key);
+        return;
+    }
+
     // Ignore commands until timer has expired before allowing user to proceed.
     if (page_wifi.confirm_settings == 2) {
         return;
@@ -902,6 +1269,19 @@ static void page_wifi_handle_apply_button(lv_obj_t *apply_button) {
  */
 static void page_wifi_on_click(uint8_t key, int sel) {
     char buf[128];
+
+    // Activate the highlighted entry of the WiFi selection overlay
+    if (page_wifi_scan.active) {
+        page_wifi_scan_select();
+        return;
+    }
+
+    // Password entry for a network picked from the scan list
+    if (keyboard_active() && page_wifi_scan.password_pending) {
+        keyboard_press();
+        return;
+    }
+
     page_wifi.item_select = sel;
 
     switch (page_wifi.item_select) {
@@ -960,12 +1340,14 @@ static void page_wifi_on_click(uint8_t key, int sel) {
     case 3:
         switch (btn_group_get_sel(&page_wifi.page_select.button)) {
         case 0: // Page Basic: SSID
-            if (!keyboard_active()) {
-                int mode = btn_group_get_sel(&page_wifi.page_1.mode.button);
-                keyboard_set_text(page_wifi.page_1.ssid.text[mode]);
-                keyboard_open();
-            } else {
+            if (keyboard_active()) {
                 keyboard_press();
+            } else if (btn_group_get_sel(&page_wifi.page_1.mode.button) == WIFI_MODE_STA) {
+                // Client mode: pick from the networks detected nearby
+                page_wifi_scan_open();
+            } else {
+                keyboard_set_text(page_wifi.page_1.ssid.text[WIFI_MODE_AP]);
+                keyboard_open();
             }
             break;
         case 1: // Page Advance: Netmask
@@ -1044,7 +1426,7 @@ static void page_wifi_on_click(uint8_t key, int sel) {
 
     // Enable/Disable panel scrolling when elements are in focus
     pp_wifi.p_arr.max =
-        keyboard_active() || page_wifi.page_2.rf_channel.active
+        keyboard_active() || page_wifi.page_2.rf_channel.active || page_wifi_scan.active
             ? 0
             : page_wifi_get_current_page_max();
 
@@ -1052,8 +1434,42 @@ static void page_wifi_on_click(uint8_t key, int sel) {
 }
 
 static void page_wifi_on_right_button(bool is_short) {
+    // Step back out of the WiFi selection overlay
+    if (page_wifi_scan.active) {
+        if (is_short) {
+            if (page_wifi_scan.saved_view) {
+                page_wifi_scan.saved_view = false;
+                page_wifi_scan.selected = 0;
+                page_wifi_scan_render();
+            } else {
+                page_wifi_scan_close();
+            }
+        }
+        return;
+    }
+
     if (is_short) {
         if (keyboard_active()) {
+            // Password entry for a network picked from the scan list
+            if (page_wifi_scan.password_pending) {
+                page_wifi_scan.password_pending = false;
+                int written = keyboard_get_text(page_wifi.page_1.passwd.text[WIFI_MODE_STA], WIFI_PASSWD_MAX);
+                if (0 < written) {
+                    page_wifi_mask_password(page_wifi.page_1.passwd.input, strlen(page_wifi.page_1.passwd.text[WIFI_MODE_STA]));
+                    if (written < 8) {
+                        lv_label_set_text(page_wifi.page_1.passwd.status, INVALID_TOO_SHORT_STR);
+                    } else {
+                        lv_label_set_text(page_wifi.page_1.passwd.status, "");
+                        page_wifi.page_1.passwd.dirty =
+                            (0 != strcmp(page_wifi.page_1.passwd.text[WIFI_MODE_STA], g_setting.wifi.passwd[WIFI_MODE_STA]));
+                    }
+                }
+                pp_wifi.p_arr.max = page_wifi_get_current_page_max();
+                page_wifi_update_dirty_flag();
+                keyboard_close();
+                return;
+            }
+
             switch (page_wifi.item_select) {
             case 1: {
                 int written = keyboard_get_text(page_wifi.page_3.root_pw.text, WIFI_PASSWD_MAX);
@@ -1215,13 +1631,27 @@ void page_wifi_get_statusbar_text(char *buffer, int size) {
         case WIFI_MODE_AP:
             snprintf(buffer, size, "WiFi: %s", g_setting.wifi.ssid[WIFI_MODE_AP]);
             break;
-        case WIFI_MODE_STA:
-            if (page_wifi_get_real_address()) {
+        case WIFI_MODE_STA: {
+            // The auto-joined network may differ from the configured one;
+            // query wpa_supplicant sparingly as this runs every UI tick.
+            static char connected[WIFI_SSID_MAX];
+            static bool is_connected = false;
+            static time_t checked = 0;
+            time_t now = time(NULL);
+            if (now - checked >= 5) {
+                is_connected = wifi_connected_ssid(connected, sizeof(connected));
+                checked = now;
+            }
+
+            if (is_connected) {
+                snprintf(buffer, size, "WiFi: %s", connected);
+            } else if (page_wifi_get_real_address()) {
                 snprintf(buffer, size, "WiFi: %s", g_setting.wifi.ssid[WIFI_MODE_STA]);
             } else {
                 snprintf(buffer, size, "WiFi: %s", _lang("Searching"));
             }
             break;
+        }
         }
     }
 }

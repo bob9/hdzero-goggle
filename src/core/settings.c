@@ -490,6 +490,30 @@ void settings_load(void) {
     ini_gets("wifi", "root_pw", g_setting_defaults.wifi.root_pw, g_setting.wifi.root_pw, WIFI_PASSWD_MAX, SETTING_INI);
     g_setting.wifi.ssh = settings_get_bool("wifi", "ssh", g_setting_defaults.wifi.ssh);
 
+    // wifi remembered client networks
+    g_setting.wifi.net_count = ini_getl("wifi", "net_count", 0, SETTING_INI);
+    if (g_setting.wifi.net_count < 0) {
+        g_setting.wifi.net_count = 0;
+    } else if (g_setting.wifi.net_count > WIFI_NETWORKS_MAX) {
+        g_setting.wifi.net_count = WIFI_NETWORKS_MAX;
+    }
+    for (int i = 0; i < g_setting.wifi.net_count; i++) {
+        char key[32];
+        snprintf(key, sizeof(key), "net%d_ssid", i);
+        ini_gets("wifi", key, "", g_setting.wifi.networks[i].ssid, WIFI_SSID_MAX, SETTING_INI);
+        snprintf(key, sizeof(key), "net%d_passwd", i);
+        ini_gets("wifi", key, "", g_setting.wifi.networks[i].passwd, WIFI_PASSWD_MAX, SETTING_INI);
+    }
+
+    // Migrate the legacy single client network into the remembered list
+    if (g_setting.wifi.net_count == 0 &&
+        strlen(g_setting.wifi.ssid[WIFI_MODE_STA]) > 0 &&
+        strcmp(g_setting.wifi.ssid[WIFI_MODE_STA], g_setting_defaults.wifi.ssid[WIFI_MODE_STA]) != 0) {
+        snprintf(g_setting.wifi.networks[0].ssid, WIFI_SSID_MAX, "%s", g_setting.wifi.ssid[WIFI_MODE_STA]);
+        snprintf(g_setting.wifi.networks[0].passwd, WIFI_PASSWD_MAX, "%s", g_setting.wifi.passwd[WIFI_MODE_STA]);
+        g_setting.wifi.net_count = 1;
+    }
+
     //  no dial under video mode
     g_setting.ease.no_dial = fs_file_exists(NO_DIAL_FILE);
 
