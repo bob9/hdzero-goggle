@@ -290,18 +290,30 @@ void rtc_persist_tick() {
         return; // never persist an unset clock
     }
 
-    g_setting.clock.year = rd.year;
-    g_setting.clock.month = rd.month;
-    g_setting.clock.day = rd.day;
-    g_setting.clock.hour = rd.hour;
-    g_setting.clock.min = rd.min;
-    g_setting.clock.sec = rd.sec;
-    ini_putl("clock", "year", rd.year, SETTING_INI);
-    ini_putl("clock", "month", rd.month, SETTING_INI);
-    ini_putl("clock", "day", rd.day, SETTING_INI);
-    ini_putl("clock", "hour", rd.hour, SETTING_INI);
-    ini_putl("clock", "min", rd.min, SETTING_INI);
-    ini_putl("clock", "sec", rd.sec, SETTING_INI);
+    // Write only keys whose value changed (each ini_putl rewrites the whole
+    // settings file): minutes every persist, hour/day/month/year only when
+    // they roll over. Seconds are not persisted - the seed is already stale
+    // by the powered-off duration, so that precision is meaningless.
+    if (g_setting.clock.year != rd.year) {
+        g_setting.clock.year = rd.year;
+        ini_putl("clock", "year", rd.year, SETTING_INI);
+    }
+    if (g_setting.clock.month != rd.month) {
+        g_setting.clock.month = rd.month;
+        ini_putl("clock", "month", rd.month, SETTING_INI);
+    }
+    if (g_setting.clock.day != rd.day) {
+        g_setting.clock.day = rd.day;
+        ini_putl("clock", "day", rd.day, SETTING_INI);
+    }
+    if (g_setting.clock.hour != rd.hour) {
+        g_setting.clock.hour = rd.hour;
+        ini_putl("clock", "hour", rd.hour, SETTING_INI);
+    }
+    if (g_setting.clock.min != rd.min) {
+        g_setting.clock.min = rd.min;
+        ini_putl("clock", "min", rd.min, SETTING_INI);
+    }
 }
 
 /**
