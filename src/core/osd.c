@@ -385,7 +385,13 @@ char *channel2str(uint8_t is_hdzero, uint8_t is_lowband, uint8_t channel) // cha
         "L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"};
 
     if (is_hdzero) {
-        if ((channel > 0) && (channel <= HDZERO_CHANNEL_NUM))
+        // Bound by the row being named, not HDZERO_CHANNEL_NUM: that macro
+        // follows the currently saved band, so with the goggles parked on
+        // Lowband it is 8 and raceband names 9-12 (E1/F1/F2/F4) would all
+        // fall back to "R1" - the all-band dial preview showed the F band
+        // as a run of R1s.
+        uint8_t const num = is_lowband ? 8 : BASE_CH_NUM;
+        if ((channel > 0) && (channel <= num))
             return hdzero_channel_name[is_lowband][channel - 1];
         else
             return hdzero_channel_name[is_lowband][0];
