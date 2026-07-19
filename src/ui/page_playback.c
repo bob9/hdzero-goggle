@@ -153,9 +153,12 @@ static void show_pb_item(uint8_t pos, char *label, bool star) {
     lv_obj_set_pos(pb_ui[pos]._label, labelPosX, labelPosY);
     lv_obj_set_pos(pb_ui[pos]._arrow, labelPosX - lv_obj_get_width(pb_ui[pos]._arrow) - 5, labelPosY);
 
-    snprintf(fname, sizeof(fname), "%s/%s." REC_packJPG, TMP_DIR, label);
+    // read the preview straight off the card: staging every thumbnail in
+    // /tmp overflows its small tmpfs once the card holds a few dozen
+    // recordings, and each one past the overflow fell back to the reel icon
+    snprintf(fname, sizeof(fname), "%s%s." REC_packJPG, MEDIA_FILES_DIR, label);
     if (fs_file_exists(fname))
-        snprintf(fname, sizeof(fname), "A:%s/%s." REC_packJPG, TMP_DIR, label);
+        snprintf(fname, sizeof(fname), "A:%s%s." REC_packJPG, MEDIA_FILES_DIR, label);
     else
         osd_resource_path(fname, "%s", OSD_RESOURCE_720, DEF_VIDEOICON);
     lv_img_set_src(pb_ui[pos]._img, fname);
@@ -282,10 +285,6 @@ static int walk_sdcard() {
         free(namelist[i]);
     }
     free(namelist);
-
-    // copy all thumbnail files to /tmp
-    snprintf(fname, sizeof(fname), "cp %s*." REC_packJPG " %s", MEDIA_FILES_DIR, TMP_DIR);
-    system_exec(fname);
 
     return media_db.count;
 }
