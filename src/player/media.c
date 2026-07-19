@@ -248,55 +248,46 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         memset(&vvParams, 0, sizeof(vvParams));
 
 #if PLAY_HDZERO && (defined(HDZGOGGLE) || defined(HDZGOGGLE2))
-        // The menu UI drives the panel at 1080p50, which drops frames of
-        // 60/90fps DVR files unevenly; retime for the duration of
-        // playback. 90fps TS files switch to true 720p90 (every frame
-        // shown) using the vdpo timing, clock phases and MFPGA setup from
-        // the live race-mode path; everything else retimes to 1080p60 on
-        // the same 148.5MHz pixel clock (90fps then lands in an even 3:2
-        // pulldown).
-        //
-        // The 720p90 mode is TS-only on purpose: the earlier "720p90
-        // black-screens" reports coincided with MP4 recordings, which
-        // black-screen for a container reason of their own (90kHz mp4
-        // timescale, since fixed) - MP4 stays on the proven 1080p60 path.
         size_t const fnlen = strlen(filename);
         bool const is_ts = fnlen >= 3 && strcasecmp(filename + fnlen - 3, ".ts") == 0;
         int fps = (playCtx->dmx->fpsX1000 + 500) / 1000;
         if (fps == 0 && is_ts) {
             // The platform demuxer reports 0 fps for TS streams without
-            // embedded timing info. Field evidence (goggles2, genuine
-            // 720p90 race recording): forcing the retime from a probed
-            // fps black-screens - the UI-sourced 720p90 display path has
-            // never actually run for such files, the demuxer gap was
-            // hiding it. Until that path is brought up on hardware, the
-            // probe is diagnostic only: log the real fps, keep the
-            // stock (working, 50Hz) display path.
+            // embedded timing info - which is every goggle race
+            // recording; derive the frame rate from the PTS spacing.
             int const probed = ts_probe_fps_x1000(filename);
             if (probed > 0) {
-                LOGI("ts fps probe: %d mfps (diagnostic only, no retime)", probed);
+                fps = (probed + 500) / 1000;
+                LOGI("ts fps probe: %d mfps", probed);
             }
         }
         LOGI("playback: %dx%d demux %d mfps -> fps %d, %s", playCtx->dmx->width,
              playCtx->dmx->height, playCtx->dmx->fpsX1000, fps, is_ts ? "ts" : "not ts");
-        // TS-only for ALL retiming: MP4 playback goes down the exact stock
-        // display path, as a candidate fix for MP4 black screens (and as a
-        // bisect probe for whether the retime is what broke them)
-        // 720p90 additionally requires <=720p content: the mode drives the
-        // panel pipeline at 1280x720, and 90fps recordings are the 540p/720p
-        // race modes by definition - a misdetected 1080p file must not land
-        // here (black screen).
-        if (fps >= 80 && is_ts && playCtx->dmx->height <= 720) {
+#if defined(HDZGOGGLE2)
+        // Play 60/90fps TS recordings through the live-video display path
+        // instead of the 1080p50 menu timing, which drops their frames
+        // unevenly. Bench-verified on goggles2 hardware: the FPGA's UI
+        // path only ever locks 1080p50, but the video path (FPGA video
+        // input, decoded video riding the vdpo overlay plane over the VRX
+        // mute raster) displays 1080p60 pixel-perfectly and locks 720p90.
+        // The 720p90 mode scans out a 1280x720 raster, so the VO layer
+        // must be sized to match - and 90fps recordings are the 540p/720p
+        // race modes by definition, so a misdetected 1080p file must not
+        // land there. TS-only: MP4s have a black-screen history of their
+        // own and stay on the stock path. The G1 video path is not yet
+        // hardware-verified; its bench remains for that.
+        if (is_ts && fps >= 80 && playCtx->dmx->height <= 720) {
             playCtx->retimedHz = 90;
             voWidth = 1280;
             voHeight = 720;
-        } else if (fps >= 55 && is_ts) {
+        } else if (is_ts && fps >= 55) {
             playCtx->retimedHz = 60;
         }
         if (playCtx->retimedHz) {
             LOGI("retiming display to %dHz for %dfps file", playCtx->retimedHz, fps);
-            Display_UI_SetRefresh(playCtx->retimedHz);
+            Display_Playback_SetMode(playCtx->retimedHz);
         }
+#endif
 #endif
 
         vvParams.initRotation = 0;
@@ -348,13 +339,19 @@ failed:
     vdec2vo_deinitSys(playCtx->vv);
     awdmx_close(playCtx->dmx);
     if (playCtx->retimedHz) {
-        Display_UI_SetRefresh(0);
+        Display_Playback_SetMode(0);
     }
     pthread_mutex_destroy(&playCtx->mutex);
     free(playCtx);
     LOGD("exit done");
 
     return NULL;
+}
+
+int media_retimed_hz(media_t *media) {
+    if (!media)
+        return 0;
+    return ((PlayContext_t *)media->context)->retimedHz;
 }
 
 void media_exit(media_t *media) {
@@ -368,7 +365,7 @@ void media_exit(media_t *media) {
     vdec2vo_deinitSys(playCtx->vv);
     awdmx_close(playCtx->dmx);
     if (playCtx->retimedHz) {
-        Display_UI_SetRefresh(0);
+        Display_Playback_SetMode(0);
     }
     pthread_mutex_destroy(&playCtx->mutex);
     free(media->context);

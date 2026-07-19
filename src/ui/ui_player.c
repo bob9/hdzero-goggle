@@ -400,6 +400,11 @@ void mplayer_file(char *fname) {
     load_stars(fname);
     init_mplayer();
     media_init(fname);
+    if (media_retimed_hz(media) == 90) {
+        // the 720p90 display mode scans out the top-left 1280x720 of the
+        // layout; move the control bar up into the visible window
+        lv_obj_set_pos(controller.bar, (1280 - UI_MPLAYER_CB_WIDTH) >> 1, 720 - 160);
+    }
     media_start();
     update_mplayer();
 }

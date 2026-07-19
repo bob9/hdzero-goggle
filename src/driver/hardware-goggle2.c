@@ -701,6 +701,25 @@ int Display_UI_BenchRestore(const char **desc) {
     return 0;
 }
 
+// Bench recipes 3 (1080p60, pixel-perfect) and 1 (720p90, locks and
+// displays; the sizing artifacts were the 1080p-sized VO layer) verified on
+// hardware, baseband-off variants - the VRX mute raster behind the vdpo
+// overlay is all the video input the FPGA needs.
+void Display_Playback_SetMode(int hz) {
+    pthread_mutex_lock(&hardware_mutex);
+    screen.display(0);
+
+    Display_UI_init();
+    if (hz == 90)
+        Display_720P90_t(VR_540P90);
+    else if (hz == 60)
+        Display_1080P30_t(VR_1080P30);
+
+    screen.display(1);
+    pthread_mutex_unlock(&hardware_mutex);
+    LOGI("Display_Playback_SetMode: %dHz", hz ? hz : 50);
+}
+
 void Display_720P60_50_t(int mode, uint8_t is_43) // fps: 0=50, 1=60
 {
     screen.display(0);

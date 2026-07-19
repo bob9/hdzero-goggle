@@ -728,6 +728,24 @@ int Display_UI_BenchRestore(const char **desc) {
     return 0;
 }
 
+// Same shape as the goggles2 implementation, but the G1's video-path
+// playback modes are not yet hardware-verified, so nothing calls this
+// automatically on G1 - run the bench to verify, then enable in media.c.
+void Display_Playback_SetMode(int hz) {
+    pthread_mutex_lock(&hardware_mutex);
+    screen.display(0);
+
+    Display_UI_init();
+    if (hz == 90)
+        Display_720P90_t(VR_540P90);
+    else if (hz == 60)
+        Display_1080P30_t(VR_1080P30);
+
+    screen.display(1);
+    pthread_mutex_unlock(&hardware_mutex);
+    LOGI("Display_Playback_SetMode: %dHz", hz ? hz : 50);
+}
+
 void Display_720P60_50_t(int mode, uint8_t is_43) // fps: 0=50, 1=60
 {
     screen.display(0);

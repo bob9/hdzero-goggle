@@ -611,6 +611,11 @@ void Display_UI() {
 void Display_UI_SetRefresh(int hz) {
 }
 
+// No playback display modes either, for the same reason.
+void Display_Playback_SetMode(int hz) {
+    (void)hz;
+}
+
 // No retime bench either, for the same reason.
 int Display_UI_BenchNext(const char **desc) {
     (void)desc;
