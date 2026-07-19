@@ -172,10 +172,11 @@ void tune_channel(uint8_t action) {
                 ini_putl("scan", "channel", g_setting.scan.channel, SETTING_INI);
                 dvr_cmd(DVR_STOP);
                 hdzero_switch_channel(g_setting.scan.channel - 1);
+                // Only the deliberate long press sends the channel to the
+                // VTX; a click retunes the goggles alone, so previewing
+                // another pilot's channel can never retune your drone.
                 if (action == DIAL_KEY_PRESS) {
                     msp_channel_update();
-                    channel_osd_sent = CHANNEL_SHOWTIME;
-                } else if (msp_channel_update_auto()) {
                     channel_osd_sent = CHANNEL_SHOWTIME;
                 }
             } else if (action == DIAL_KEY_PRESS) {
@@ -191,8 +192,6 @@ void tune_channel(uint8_t action) {
                 rtc6715.set_ch(g_setting.source.analog_channel - 1);
                 if (action == DIAL_KEY_PRESS) {
                     msp_channel_update();
-                    channel_osd_sent = CHANNEL_SHOWTIME;
-                } else if (msp_channel_update_auto()) {
                     channel_osd_sent = CHANNEL_SHOWTIME;
                 }
             }
