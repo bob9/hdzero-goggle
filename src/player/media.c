@@ -263,19 +263,17 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         }
         LOGI("playback: %dx%d demux %d mfps -> fps %d, %s", playCtx->dmx->width,
              playCtx->dmx->height, playCtx->dmx->fpsX1000, fps, is_ts ? "ts" : "not ts");
-#if defined(HDZGOGGLE2)
         // Play 60/90fps TS recordings through the live-video display path
         // instead of the 1080p50 menu timing, which drops their frames
-        // unevenly. Bench-verified on goggles2 hardware: the FPGA's UI
-        // path only ever locks 1080p50, but the video path (FPGA video
-        // input, decoded video riding the vdpo overlay plane over the VRX
-        // mute raster) displays 1080p60 pixel-perfectly and locks 720p90.
-        // The 720p90 mode scans out a 1280x720 raster, so the VO layer
-        // must be sized to match - and 90fps recordings are the 540p/720p
-        // race modes by definition, so a misdetected 1080p file must not
-        // land there. TS-only: MP4s have a black-screen history of their
-        // own and stay on the stock path. The G1 video path is not yet
-        // hardware-verified; its bench remains for that.
+        // unevenly. Bench-verified on goggles2 and goggle (v1) hardware:
+        // the FPGA's UI path only ever locks 1080p50, but the video path
+        // (FPGA video input, decoded video riding the vdpo overlay plane
+        // over the VRX mute raster) displays 1080p60 pixel-perfectly and
+        // locks 720p90. The 720p90 mode scans out a 1280x720 raster, so
+        // the VO layer must be sized to match - and 90fps recordings are
+        // the 540p/720p race modes by definition, so a misdetected 1080p
+        // file must not land there. TS-only: MP4s have a black-screen
+        // history of their own and stay on the stock path.
         if (is_ts && fps >= 80 && playCtx->dmx->height <= 720) {
             playCtx->retimedHz = 90;
             voWidth = 1280;
@@ -287,7 +285,6 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
             LOGI("retiming display to %dHz for %dfps file", playCtx->retimedHz, fps);
             Display_Playback_SetMode(playCtx->retimedHz);
         }
-#endif
 #endif
 
         vvParams.initRotation = 0;
