@@ -1,5 +1,7 @@
 #include "media.h"
 
+#include "ts_probe.h"
+
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -8,6 +10,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -17,6 +20,7 @@
 
 #include "adec2ao.h"
 #include "awdmx.h"
+#include "driver/hardware.h"
 #include "gogglemsg.h"
 #include "vdec2vo.h"
 #include "version.h"
@@ -66,6 +70,7 @@ typedef struct
     pthread_mutex_t mutex;
 
     int playingTime; // ms
+    int retimedHz;   // nonzero while the UI output is retimed for this file
 } PlayContext_t;
 
 static int play_start(PlayContext_t *playCtx) {
@@ -238,7 +243,52 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         goto failed;
     } else {
         Vdec2VoParams_t vvParams;
+        int voWidth = VO_WIDTH;
+        int voHeight = VO_HEIGHT;
         memset(&vvParams, 0, sizeof(vvParams));
+
+#if PLAY_HDZERO && (defined(HDZGOGGLE) || defined(HDZGOGGLE2))
+        size_t const fnlen = strlen(filename);
+        bool const is_ts = fnlen >= 3 && strcasecmp(filename + fnlen - 3, ".ts") == 0;
+        int fps = (playCtx->dmx->fpsX1000 + 500) / 1000;
+        if (fps == 0 && is_ts) {
+            // The platform demuxer reports 0 fps for TS streams without
+            // embedded timing info - which is every goggle race
+            // recording; derive the frame rate from the PTS spacing.
+            int const probed = ts_probe_fps_x1000(filename);
+            if (probed > 0) {
+                fps = (probed + 500) / 1000;
+                LOGI("ts fps probe: %d mfps", probed);
+            }
+        }
+        LOGI("playback: %dx%d demux %d mfps -> fps %d, %s", playCtx->dmx->width,
+             playCtx->dmx->height, playCtx->dmx->fpsX1000, fps, is_ts ? "ts" : "not ts");
+#if defined(HDZGOGGLE2)
+        // Play 60/90fps TS recordings through the live-video display path
+        // instead of the 1080p50 menu timing, which drops their frames
+        // unevenly. Bench-verified on goggles2 hardware: the FPGA's UI
+        // path only ever locks 1080p50, but the video path (FPGA video
+        // input, decoded video riding the vdpo overlay plane over the VRX
+        // mute raster) displays 1080p60 pixel-perfectly and locks 720p90.
+        // The 720p90 mode scans out a 1280x720 raster, so the VO layer
+        // must be sized to match - and 90fps recordings are the 540p/720p
+        // race modes by definition, so a misdetected 1080p file must not
+        // land there. TS-only: MP4s have a black-screen history of their
+        // own and stay on the stock path. The G1 video path is not yet
+        // hardware-verified; its bench remains for that.
+        if (is_ts && fps >= 80 && playCtx->dmx->height <= 720) {
+            playCtx->retimedHz = 90;
+            voWidth = 1280;
+            voHeight = 720;
+        } else if (is_ts && fps >= 55) {
+            playCtx->retimedHz = 60;
+        }
+        if (playCtx->retimedHz) {
+            LOGI("retiming display to %dHz for %dfps file", playCtx->retimedHz, fps);
+            Display_Playback_SetMode(playCtx->retimedHz);
+        }
+#endif
+#endif
 
         vvParams.initRotation = 0;
         vvParams.pixelFormat = MM_PIXEL_FORMAT_YVU_PLANAR_420;
@@ -247,8 +297,8 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         vvParams.vdec.width = playCtx->dmx->width;
         vvParams.vdec.height = playCtx->dmx->height;
 
-        vvParams.vo.width = VO_WIDTH;
-        vvParams.vo.height = VO_HEIGHT;
+        vvParams.vo.width = voWidth;
+        vvParams.vo.height = voHeight;
         vvParams.vo.intfType = VO_intfTYPE;
         vvParams.vo.intfSync = VO_intfSYNC;
         vvParams.vo.uiChn = VO_uiCHN;
@@ -288,11 +338,20 @@ failed:
     adec2ao_deinitSys(playCtx->aa);
     vdec2vo_deinitSys(playCtx->vv);
     awdmx_close(playCtx->dmx);
+    if (playCtx->retimedHz) {
+        Display_Playback_SetMode(0);
+    }
     pthread_mutex_destroy(&playCtx->mutex);
     free(playCtx);
     LOGD("exit done");
 
     return NULL;
+}
+
+int media_retimed_hz(media_t *media) {
+    if (!media)
+        return 0;
+    return ((PlayContext_t *)media->context)->retimedHz;
 }
 
 void media_exit(media_t *media) {
@@ -305,6 +364,9 @@ void media_exit(media_t *media) {
     adec2ao_deinitSys(playCtx->aa);
     vdec2vo_deinitSys(playCtx->vv);
     awdmx_close(playCtx->dmx);
+    if (playCtx->retimedHz) {
+        Display_Playback_SetMode(0);
+    }
     pthread_mutex_destroy(&playCtx->mutex);
     free(media->context);
     free(media);

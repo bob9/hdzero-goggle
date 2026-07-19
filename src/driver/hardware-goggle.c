@@ -596,6 +596,108 @@ void Display_UI() {
     pthread_mutex_unlock(&hardware_mutex);
 }
 
+// ---- DVR display bring-up bench (generation 2) -----------------------------
+// Generation 1 established (on goggles2 hardware) that the FPGA's UI input
+// path (reg 0x20=0) only produces a picture at 1080p50 - even a bare vdpo
+// switch to 1080p60 with no other change goes black. So these recipes take
+// the opposite route: enter the *genuine* live-video display mode (FPGA
+// video input, reg 0x20=1), which provably runs at 720p90/1080p60/720p60
+// every day, and let the playback video ride in on the vdpo overlay plane.
+// The VRX contributes only its mute raster (or nothing, BB-off variants);
+// overlay pixels that are pure black chroma-key through to it, which is
+// why OSD widgets use 0x010101 backgrounds. Stepped from the playback
+// screen with the right button; recipe 0 always restores a working screen.
+void Display_720P90_t(int mode);
+void Display_1080P30_t(int mode);
+void Display_720P60_50_t(int mode, uint8_t is_43);
+
+static int bench_idx = 0;
+static bool bench_opened_bb = false;
+
+static const char *const bench_desc[] = {
+    "stock 1080p50 UI",
+    "video path 720p90",
+    "video path 720p90 +BB",
+    "video path 1080p60",
+    "video path 1080p60 +BB",
+    "video path 720p60 +BB",
+};
+#define BENCH_RECIPES (int)(sizeof(bench_desc) / sizeof(bench_desc[0]))
+
+static void bench_apply(int idx) {
+    bool const wants_bb = (idx == 2) || (idx == 4) || (idx == 5);
+
+    pthread_mutex_lock(&hardware_mutex);
+    screen.display(0);
+
+    Display_UI_init(); // deterministic 1080p50 baseline for every recipe
+
+    if (bench_opened_bb && !wants_bb) {
+        HDZero_Close();
+        bench_opened_bb = false;
+    }
+    if (wants_bb && !g_hw_stat.hdzero_open) {
+        HDZero_open(g_setting.source.hdzero_bw);
+        bench_opened_bb = true;
+    }
+
+    switch (idx) {
+    case 1:
+    case 2:
+        Display_720P90_t(VR_540P90);
+        break;
+    case 3:
+    case 4:
+        Display_1080P30_t(VR_1080P30);
+        break;
+    case 5:
+        Display_720P60_50_t(VR_720P60, 0);
+        break;
+    default:
+        break; // recipe 0: the Display_UI_init baseline is the recipe
+    }
+
+    screen.display(1);
+    pthread_mutex_unlock(&hardware_mutex);
+
+    LOGI("bench recipe %d: %s", idx, bench_desc[idx]);
+    beep_dur(idx ? BEEP_SHORT : BEEP_LONG); // long beep = back on stock timing
+}
+
+int Display_UI_BenchNext(const char **desc) {
+    bench_idx = (bench_idx + 1) % BENCH_RECIPES;
+    bench_apply(bench_idx);
+    *desc = bench_desc[bench_idx];
+    return bench_idx;
+}
+
+int Display_UI_BenchRestore(const char **desc) {
+    *desc = bench_desc[0];
+    if (bench_idx != 0) {
+        bench_idx = 0;
+        bench_apply(0);
+    }
+    return 0;
+}
+
+// Same shape as the goggles2 implementation, but the G1's video-path
+// playback modes are not yet hardware-verified, so nothing calls this
+// automatically on G1 - run the bench to verify, then enable in media.c.
+void Display_Playback_SetMode(int hz) {
+    pthread_mutex_lock(&hardware_mutex);
+    screen.display(0);
+
+    Display_UI_init();
+    if (hz == 90)
+        Display_720P90_t(VR_540P90);
+    else if (hz == 60)
+        Display_1080P30_t(VR_1080P30);
+
+    screen.display(1);
+    pthread_mutex_unlock(&hardware_mutex);
+    LOGI("Display_Playback_SetMode: %dHz", hz ? hz : 50);
+}
+
 void Display_720P60_50_t(int mode, uint8_t is_43) // fps: 0=50, 1=60
 {
     screen.display(0);
