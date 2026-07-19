@@ -569,142 +569,31 @@ void Display_UI() {
     pthread_mutex_unlock(&hardware_mutex);
 }
 
-// Retime the UI output for DVR playback. 60Hz keeps the 1080p UI on the
-// same 148.5MHz pixel clock, so the OLED and FPGA settings from
-// Display_UI_init stay valid. 90Hz mirrors the live 720p90 path
-// (Display_720P90_t) — vdpo timing, clock phases, FPGA input mode and MFPGA
-// timing registers — but keeps the FPGA input on the UI (no VO switch, no
-// VRX involvement). 0 restores the stock menu timing with a full
-// Display_UI_init.
-void Display_UI_SetRefresh(int hz) {
-    int tmg = (hz == 90) ? VDPO_TMG_720P90 : (hz == 60) ? VDPO_TMG_1080P60 : VDPO_TMG_1080P50;
-
-    pthread_mutex_lock(&hardware_mutex);
-    if ((g_hw_stat.source_mode == SOURCE_MODE_UI) && (g_hw_stat.vdpo_tmg != tmg)) {
-        screen.display(0);
-
-        if (hz == 90) {
-            I2C_Write(ADDR_FPGA, 0x8C, 0x00);
-
-            system_exec("dispw -s vdpo 720p90");
-            g_hw_stat.vdpo_tmg = VDPO_TMG_720P90;
-            system_exec("aww 0x0300b340 0x00000008");
-            vclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P90, 0);
-            pclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P90);
-            I2C_Write(ADDR_FPGA, 0x80, 0x03);
-
-            screen.mfpga.set720p90(VR_540P90);
-            screen.vtmg(1);
-
-            I2C_Write(ADDR_FPGA, 0xa7, 0x01);
-            I2C_Write(ADDR_FPGA, 0x8C, 0x01);
-            system_exec("aww 0x0300b084 0x00003fff"); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
-            system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
-        } else if (hz == 60) {
-            system_exec("dispw -s vdpo 1080p60");
-            g_hw_stat.vdpo_tmg = VDPO_TMG_1080P60;
-            system_exec("aww 0x0300b340 0x00000008");
-            system_exec("aww 0x0300b084 0x00003fff"); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
-            system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
-        } else {
-            Display_UI_init();
-        }
-
-        screen.display(1);
-        LOGI("Display_UI_SetRefresh: %dHz", hz ? hz : 50);
-    }
-    pthread_mutex_unlock(&hardware_mutex);
-}
-
-// ---- DVR display bring-up bench (generation 2) -----------------------------
-// Generation 1 established on hardware that the FPGA's UI input path (reg
-// 0x20=0) only produces a picture at 1080p50 - even a bare vdpo switch to
-// 1080p60 with no other change goes black, and no amount of live-path FPGA
-// configuration helps. So these recipes take the opposite route: enter the
-// *genuine* live-video display mode (FPGA video input, reg 0x20=1), which
-// provably runs at 720p90/1080p60/720p60 every day, and let the playback
-// video ride in on the vdpo overlay plane. The VRX contributes only its
-// mute raster (or nothing, BB-off variants); overlay pixels that are pure
-// black chroma-key through to it, which is why OSD widgets use 0x010101
-// backgrounds. Stepped from the playback screen with the right button;
-// recipe 0 always restores a working screen.
-void Display_720P90_t(int mode);
-void Display_1080P30_t(int mode);
-void Display_720P60_50_t(int mode, uint8_t is_43);
-
-static int bench_idx = 0;
-static bool bench_opened_bb = false;
-
-static const char *const bench_desc[] = {
-    "stock 1080p50 UI",
-    "video path 720p90",
-    "video path 720p90 +BB",
-    "video path 1080p60",
-    "video path 1080p60 +BB",
-    "video path 720p60 +BB",
-};
-#define BENCH_RECIPES (int)(sizeof(bench_desc) / sizeof(bench_desc[0]))
-
-static void bench_apply(int idx) {
-    bool const wants_bb = (idx == 2) || (idx == 4) || (idx == 5);
-
-    pthread_mutex_lock(&hardware_mutex);
-    screen.display(0);
-
-    Display_UI_init(); // deterministic 1080p50 baseline for every recipe
-
-    if (bench_opened_bb && !wants_bb) {
-        HDZero_Close();
-        bench_opened_bb = false;
-    }
-    if (wants_bb && !g_hw_stat.hdzero_open) {
-        HDZero_open(g_setting.source.hdzero_bw);
-        bench_opened_bb = true;
-    }
-
-    switch (idx) {
-    case 1:
-    case 2:
-        Display_720P90_t(VR_540P90);
-        break;
-    case 3:
-    case 4:
-        Display_1080P30_t(VR_1080P30);
-        break;
-    case 5:
-        Display_720P60_50_t(VR_720P60, 0);
-        break;
-    default:
-        break; // recipe 0: the Display_UI_init baseline is the recipe
-    }
-
-    screen.display(1);
-    pthread_mutex_unlock(&hardware_mutex);
-
-    LOGI("bench recipe %d: %s", idx, bench_desc[idx]);
-    beep_dur(idx ? BEEP_SHORT : BEEP_LONG); // long beep = back on stock timing
-}
-
+// The DVR playback display bench (see hardware-goggle.c) served its purpose
+// here: goggles2 findings are hardware-verified and shipped as
+// Display_Playback_SetMode below. Key facts, so nobody re-treads the dead
+// end: the FPGA's UI input path (reg 0x20=0) only ever locks 1080p50 - even
+// a bare vdpo switch to 1080p60 goes black regardless of FPGA/MFPGA/vtmg
+// configuration. The live-video path (reg 0x20=1) is the way: the decoded
+// video rides the vdpo overlay plane over the VRX mute raster (pure black
+// 0x000000 chroma-keys through, which is why OSD widgets use 0x010101).
 int Display_UI_BenchNext(const char **desc) {
-    bench_idx = (bench_idx + 1) % BENCH_RECIPES;
-    bench_apply(bench_idx);
-    *desc = bench_desc[bench_idx];
-    return bench_idx;
+    (void)desc;
+    return -1;
 }
 
 int Display_UI_BenchRestore(const char **desc) {
-    *desc = bench_desc[0];
-    if (bench_idx != 0) {
-        bench_idx = 0;
-        bench_apply(0);
-    }
-    return 0;
+    (void)desc;
+    return -1;
 }
 
-// Bench recipes 3 (1080p60, pixel-perfect) and 1 (720p90, locks and
-// displays; the sizing artifacts were the 1080p-sized VO layer) verified on
-// hardware, baseband-off variants - the VRX mute raster behind the vdpo
-// overlay is all the video input the FPGA needs.
+void Display_720P90_t(int mode);
+void Display_1080P30_t(int mode);
+
+// Playback display modes, hardware-verified (9.5.11 bench, 9.5.12 field):
+// 1080p60 pixel-perfect; 720p90 needs the VO layer sized 1280x720 and shows
+// the top-left 1280x720 of the UI layout. Baseband stays off - the VRX mute
+// raster behind the vdpo overlay is all the video input the FPGA needs.
 void Display_Playback_SetMode(int hz) {
     pthread_mutex_lock(&hardware_mutex);
     screen.display(0);

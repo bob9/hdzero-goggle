@@ -89,7 +89,6 @@ void Source_HDMI_in();
 void Source_AV(bool is_av_in);
 void Display_UI_init();
 void Display_UI();
-void Display_UI_SetRefresh(int hz); // retime the UI output for DVR playback (60 = 1080p60, 90 = 720p90); 0 restores the default UI timing
 
 // DVR playback display mode, bench-verified on goggles2 hardware: the live
 // video path (FPGA video input) displays the vdpo overlay plane - which
