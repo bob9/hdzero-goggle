@@ -438,6 +438,7 @@ void rbtn_click(right_button_t click_type) {
         switch (g_app_state) {
         case APP_STATE_SUBMENU:
         case APP_STATE_WIFI:
+        case APP_STATE_PLAYBACK: // during video playback the playback page routes these to the player
             if (click_type == RIGHT_CLICK)
                 submenu_right_button(true);
             else if (click_type == RIGHT_LONG_PRESS)

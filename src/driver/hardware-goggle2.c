@@ -616,6 +616,90 @@ void Display_UI_SetRefresh(int hz) {
     pthread_mutex_unlock(&hardware_mutex);
 }
 
+// ---- DVR display bring-up bench --------------------------------------------
+// The FPGA between the SoC vdpo output and the OLEDs has no public register
+// documentation, so which write set lets the *UI* input path (reg 0x20=0)
+// run at 720p90 or 1080p60 can only be found on hardware. Every recipe
+// rebuilds the stock 1080p50 UI first, then layers on one more piece of the
+// live-video 720p90 path (known-good end to end, but normally driven from
+// the FPGA's video input): R1-R7 climb that ladder in the live path's write
+// order, R8/R9 try the two 1080p60 variants. Stepped from the playback
+// screen with the right button; recipe 0 always restores a working screen.
+static int bench_idx = 0;
+
+static const char *const bench_desc[] = {
+    "stock 1080p50",
+    "720p90 vdpo+vtmg1",
+    "720p90 +clk phases",
+    "720p90 +fpga 0x80",
+    "720p90 +mfpga scaler",
+    "720p90 +0xa7",
+    "720p90 +0x8C run",
+    "720p90 +vo strobe",
+    "1080p60 vdpo only",
+    "1080p60 +vtmg2",
+};
+#define BENCH_RECIPES (int)(sizeof(bench_desc) / sizeof(bench_desc[0]))
+
+static void bench_apply(int idx) {
+    pthread_mutex_lock(&hardware_mutex);
+    screen.display(0);
+
+    Display_UI_init(); // deterministic 1080p50 baseline for every recipe
+
+    if (idx >= 1 && idx <= 7) { // 720p90 ladder
+        system_exec("dispw -s vdpo 720p90");
+        g_hw_stat.vdpo_tmg = VDPO_TMG_720P90;
+        system_exec("aww 0x0300b340 0x00000008");
+        if (idx >= 2) {
+            vclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P90, 0);
+            pclk_phase_set(VIDEO_SOURCE_HDZERO_IN_720P90);
+        }
+        if (idx >= 3)
+            I2C_Write(ADDR_FPGA, 0x80, 0x03);
+        if (idx >= 4)
+            screen.mfpga.set720p90(VR_540P90);
+        screen.vtmg(1);
+        if (idx >= 5)
+            I2C_Write(ADDR_FPGA, 0xa7, 0x01);
+        if (idx >= 6)
+            I2C_Write(ADDR_FPGA, 0x8C, 0x01);
+        if (idx >= 7)
+            Display_VO_SWITCH(0);
+        system_exec("aww 0x0300b084 0x00003fff"); // vdpo clock drive strength
+        system_exec("aww 0x06542018 0x00000044"); // no horizontal chroma FIR
+    } else if (idx >= 8) { // 1080p60 variants
+        system_exec("dispw -s vdpo 1080p60");
+        g_hw_stat.vdpo_tmg = VDPO_TMG_1080P60;
+        if (idx == 9)
+            screen.vtmg(2);
+        system_exec("aww 0x0300b084 0x00003fff");
+        system_exec("aww 0x06542018 0x00000044");
+    }
+
+    screen.display(1);
+    pthread_mutex_unlock(&hardware_mutex);
+
+    LOGI("bench recipe %d: %s", idx, bench_desc[idx]);
+    beep_dur(idx ? BEEP_SHORT : BEEP_LONG); // long beep = back on stock timing
+}
+
+int Display_UI_BenchNext(const char **desc) {
+    bench_idx = (bench_idx + 1) % BENCH_RECIPES;
+    bench_apply(bench_idx);
+    *desc = bench_desc[bench_idx];
+    return bench_idx;
+}
+
+int Display_UI_BenchRestore(const char **desc) {
+    *desc = bench_desc[0];
+    if (bench_idx != 0) {
+        bench_idx = 0;
+        bench_apply(0);
+    }
+    return 0;
+}
+
 void Display_720P60_50_t(int mode, uint8_t is_43) // fps: 0=50, 1=60
 {
     screen.display(0);

@@ -611,6 +611,17 @@ void Display_UI() {
 void Display_UI_SetRefresh(int hz) {
 }
 
+// No retime bench either, for the same reason.
+int Display_UI_BenchNext(const char **desc) {
+    (void)desc;
+    return -1;
+}
+
+int Display_UI_BenchRestore(const char **desc) {
+    (void)desc;
+    return -1;
+}
+
 void HDZero_open(int bw) {
     if (bw != g_hw_stat.hdz_bw) // reopen with different bw
         HDZero_Close();

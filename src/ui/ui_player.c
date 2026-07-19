@@ -8,6 +8,7 @@
 
 #include "../conf/ui.h"
 #include "common.hh"
+#include "driver/hardware.h"
 #include "player/media.h"
 #include "record/record_definitions.h"
 #include "ui/ui_style.h"
@@ -31,6 +32,23 @@ static size_t stars_count = 0;
 static size_t stars_timestamps_s[MAX_STARS] = {
     0,
 };
+
+// Display bring-up bench readout (see Display_UI_BenchNext). The label is
+// only readable when the recipe under test actually displays - which is
+// exactly the signal the bench is after.
+static lv_obj_t *bench_label = NULL;
+
+static void bench_show(int idx, const char *desc) {
+    char text[96];
+
+    if (idx < 0 || !bench_label)
+        return;
+
+    snprintf(text, sizeof(text),
+             "Display test %d: %s\nright click = next, hold = restore", idx, desc);
+    lv_label_set_text(bench_label, text);
+    lv_obj_clear_flag(bench_label, LV_OBJ_FLAG_HIDDEN);
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 static void time2str(uint32_t t1, uint32_t t2, char *s) {
@@ -172,10 +190,21 @@ static void init_mplayer() {
     controller.enable = true;
     controller.is_playing = true;
     controller.value = controller.range = 0;
+
+    bench_label = lv_label_create(controller.bg);
+    lv_label_set_text(bench_label, "");
+    lv_obj_set_style_text_font(bench_label, &lv_font_montserrat_26, 0);
+    lv_obj_set_style_text_color(bench_label, lv_color_make(255, 255, 255), 0);
+    lv_obj_set_style_bg_color(bench_label, lv_color_make(0, 0, 0), 0);
+    lv_obj_set_style_bg_opa(bench_label, LV_OPA_70, 0);
+    lv_obj_set_style_pad_all(bench_label, 8, 0);
+    lv_obj_set_pos(bench_label, 20, 20);
+    lv_obj_add_flag(bench_label, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void free_mplayer() {
     controller.enable = false;
+    bench_label = NULL; // child of controller.bg, freed with it
     lv_obj_del(controller._btn);
     lv_obj_del(controller._label);
     lv_obj_del(controller._slider);
@@ -236,6 +265,18 @@ uint8_t mplayer_on_key(uint8_t key) {
 
         media_seek(controller.value);
         break;
+
+    case RIGHT_KEY_CLICK: {
+        const char *desc = NULL;
+        bench_show(Display_UI_BenchNext(&desc), desc);
+        break;
+    }
+
+    case RIGHT_KEY_PRESS: {
+        const char *desc = NULL;
+        bench_show(Display_UI_BenchRestore(&desc), desc);
+        break;
+    }
     }
 
     update_mplayer();
@@ -364,6 +405,10 @@ void mplayer_file(char *fname) {
 }
 
 void mplayer_exit() {
+    // never leave a bench display mode running outside the player
+    const char *desc = NULL;
+    Display_UI_BenchRestore(&desc);
+
     if (play_error_label) {
         lv_obj_del(play_error_label);
         play_error_label = NULL;
