@@ -572,6 +572,14 @@ void msp_channel_update() {
     LOGI("MSPv2 MSP_SET_BAND_CHAN %d sent", chan);
 }
 
+bool msp_channel_update_auto() {
+    if (g_setting.elrs.enable && g_setting.elrs.auto_send_vtx) {
+        msp_channel_update();
+        return true;
+    }
+    return false;
+}
+
 // Re-send the current VTX channel to the backpack and show the
 // "VTX SENT" OSD confirmation. Assignable to a button on the Input page.
 void elrs_send_vtx() {

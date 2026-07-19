@@ -85,6 +85,7 @@ const setting_t g_setting_defaults = {
     },
     .elrs = {
         .enable = false,
+        .auto_send_vtx = false,
     },
     .ease = {
         .no_dial = 0,
@@ -453,6 +454,7 @@ void settings_load(void) {
 
     // elrs
     g_setting.elrs.enable = settings_get_bool("elrs", "enable", g_setting_defaults.elrs.enable);
+    g_setting.elrs.auto_send_vtx = settings_get_bool("elrs", "auto_send_vtx", g_setting_defaults.elrs.auto_send_vtx);
 
     // clock
     g_setting.clock.year = ini_getl("clock", "year", g_setting_defaults.clock.year, SETTING_INI);
