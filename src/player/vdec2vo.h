@@ -72,6 +72,7 @@ ERRORTYPE vdec2vo_currentMediaTime(Vdec2VoContext_t *vvCtx, int *mediaTime);
 ERRORTYPE vdec2vo_checkEof(Vdec2VoContext_t *vvCtx);
 ERRORTYPE vdec2vo_setVdecEof(Vdec2VoContext_t *vvCtx);
 bool vdec2vo_isEOF(Vdec2VoContext_t *vvCtx);
+int vdec2vo_decodedFrames(Vdec2VoContext_t *vvCtx); // running decoded-frame total, -1 if unavailable
 
 #ifdef __cplusplus
 }

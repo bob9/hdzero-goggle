@@ -11,6 +11,7 @@ extern "C" {
 typedef struct {
     uint32_t playing_time;
     uint32_t duration;
+    int fps; // measured decoded frames/sec (0 until the first second elapses)
 } media_info_t;
 
 typedef void (*notify_cb_t)(media_info_t *info);

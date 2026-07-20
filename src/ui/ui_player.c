@@ -55,6 +55,18 @@ static void bench_show(int idx, const char *desc) {
     lv_obj_clear_flag(bench_label, LV_OBJ_FLAG_HIDDEN);
 }
 
+// On-screen playback FPS readout (top-left). Shows the real decoded
+// frames/sec so 90fps playback can be confirmed at a glance.
+static lv_obj_t *fps_label = NULL;
+
+static void fps_show(int fps) {
+    if (!fps_label)
+        return;
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%d fps", fps);
+    lv_label_set_text(fps_label, buf);
+}
+
 // Auto-hide for the control bar: gone after a few quiet seconds, back on
 // any dial activity.
 #define BAR_HIDE_MS 4000
@@ -213,6 +225,15 @@ static void init_mplayer() {
     controller.is_playing = true;
     controller.value = controller.range = 0;
 
+    fps_label = lv_label_create(lv_scr_act());
+    lv_label_set_text(fps_label, "-- fps");
+    lv_obj_set_style_text_font(fps_label, &lv_font_montserrat_26, 0);
+    lv_obj_set_style_text_color(fps_label, lv_color_make(255, 255, 0), 0);
+    lv_obj_set_style_bg_color(fps_label, lv_color_make(1, 1, 1), 0);
+    lv_obj_set_style_bg_opa(fps_label, LV_OPA_70, 0);
+    lv_obj_set_style_pad_all(fps_label, 4, 0);
+    lv_obj_set_pos(fps_label, 20, 20);
+
     bench_label = lv_label_create(controller.bg);
     lv_label_set_text(bench_label, "");
     lv_obj_set_style_text_font(bench_label, &lv_font_montserrat_26, 0);
@@ -235,6 +256,10 @@ static void free_mplayer() {
     }
     lv_obj_del(controller.bar);
     lv_obj_del(controller.bg);
+    if (fps_label) {
+        lv_obj_del(fps_label);
+        fps_label = NULL;
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -323,6 +348,7 @@ static void notify_cb(media_info_t *info) {
 
     pthread_mutex_lock(&lvgl_mutex);
     update_time_label(true);
+    fps_show(info->fps);
     lv_timer_handler();
     pthread_mutex_unlock(&lvgl_mutex);
 }

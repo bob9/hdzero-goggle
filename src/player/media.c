@@ -73,6 +73,7 @@ typedef struct
 
     int playingTime; // ms
     int retimedHz;   // nonzero while the UI output is retimed for this file
+    int fps;         // measured decoded frames/sec, updated once a second
 } PlayContext_t;
 
 static int play_start(PlayContext_t *playCtx) {
@@ -161,6 +162,8 @@ void *thread_media(void *params) {
     // for how long, plus what un-stuck it.
     int stall_last_ms = -1;
     int stall_ticks = 0;
+    int fps_ticks = 0;
+    int fps_last_frames = -1;
     for (;;) {
         if (!media)
             break;
@@ -193,6 +196,15 @@ void *thread_media(void *params) {
             stall_ticks = 0;
         }
         stall_last_ms = rolling ? playCtx->playingTime : -1;
+
+        // Once a second (10 x 100ms ticks): decoded-frame delta = real fps.
+        if (++fps_ticks >= 10) {
+            int const frames = vdec2vo_decodedFrames(playCtx->vv);
+            if (frames >= 0 && fps_last_frames >= 0 && frames >= fps_last_frames)
+                playCtx->fps = frames - fps_last_frames;
+            fps_last_frames = frames;
+            fps_ticks = 0;
+        }
         pthread_mutex_unlock(&playCtx->mutex);
 
         // if(media->is_media_thread_exit)
@@ -200,6 +212,7 @@ void *thread_media(void *params) {
 
         info.playing_time = playCtx->playingTime;
         info.duration = playCtx->dmx->msDuration;
+        info.fps = playCtx->fps;
         if (!media->is_media_thread_exit)
             notify(&info);
         usleep(100000);

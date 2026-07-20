@@ -463,3 +463,19 @@ ERRORTYPE vdec2vo_checkEof(Vdec2VoContext_t *vvCtx) {
 bool vdec2vo_isEOF(Vdec2VoContext_t *vvCtx) {
     return vvCtx->flagEOF & VDEC2VO_voEOF;
 }
+
+// Total video frames decoded so far, from the vendor decoder's own
+// counter, or -1 if unavailable. Sampled once a second to derive the
+// on-screen playback FPS. AW_MPI_VDEC_Query is exported by the vendor
+// lib but missing from the headers; declare it here from the VENC/AENC
+// twin's shape (all three are XXX_Query(chn, CHN_STAT_S*)).
+extern ERRORTYPE AW_MPI_VDEC_Query(VDEC_CHN VdChn, VDEC_CHN_STAT_S *pStat);
+
+int vdec2vo_decodedFrames(Vdec2VoContext_t *vvCtx) {
+    if (!vvCtx || vvCtx->vdecChn == MM_INVALID_CHN)
+        return -1;
+    VDEC_CHN_STAT_S stat;
+    if (AW_MPI_VDEC_Query(vvCtx->vdecChn, &stat) != SUCCESS)
+        return -1;
+    return (int)stat.mDecodeStreamFrames;
+}
