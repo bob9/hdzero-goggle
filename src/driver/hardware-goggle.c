@@ -621,6 +621,10 @@ static const char *const bench_desc[] = {
     "video path 1080p60",
     "video path 1080p60 +BB",
     "video path 720p60 +BB",
+    "key probe 0x10: GREEN GONE = winner",
+    "key probe 0x12: GREEN GONE = winner",
+    "key probe 0x14: GREEN GONE = winner",
+    "key probe 0x18: GREEN GONE = winner",
 };
 #define BENCH_RECIPES (int)(sizeof(bench_desc) / sizeof(bench_desc[0]))
 
@@ -653,6 +657,22 @@ static void bench_apply(int idx) {
     case 5:
         Display_720P60_50_t(VR_720P60, 0);
         break;
+    case 6:
+    case 7:
+    case 8:
+    case 9: {
+        // Chroma-key hunt: 720p90 with baseband OFF, so keyed-through
+        // pixels show the FPGA's green idle raster. Every stock path sets
+        // the OSD control register 0x84 to 0x11 (and 0x00 is commented as
+        // "close OSD"), so candidate values probe for a key-disable bit.
+        // The screen's black background turning from green to black means
+        // the key is off - then playback needs no baseband and no keying:
+        // no green, no shimmer.
+        static const uint8_t osd_probe[] = {0x10, 0x12, 0x14, 0x18};
+        Display_720P90_t(VR_540P90);
+        I2C_Write(ADDR_FPGA, 0x84, osd_probe[idx - 6]);
+        break;
+    }
     default:
         break; // recipe 0: the Display_UI_init baseline is the recipe
     }
