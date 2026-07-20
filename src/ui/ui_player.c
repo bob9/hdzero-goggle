@@ -55,6 +55,23 @@ static void bench_show(int idx, const char *desc) {
     lv_obj_clear_flag(bench_label, LV_OBJ_FLAG_HIDDEN);
 }
 
+// Auto-hide for the control bar: gone after a few quiet seconds, back on
+// any dial activity.
+#define BAR_HIDE_MS 4000
+static lv_timer_t *bar_hide_timer = NULL;
+
+static void bar_hide_cb(lv_timer_t *timer) {
+    (void)timer;
+    if (controller.enable)
+        lv_obj_add_flag(controller.bar, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void bar_show(void) {
+    lv_obj_clear_flag(controller.bar, LV_OBJ_FLAG_HIDDEN);
+    if (bar_hide_timer)
+        lv_timer_reset(bar_hide_timer);
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 static void time2str(uint32_t t1, uint32_t t2, char *s) {
     int m1, s1, m2, s2;
@@ -240,6 +257,7 @@ uint8_t mplayer_on_key(uint8_t key) {
         return 0;
 
     LOGI("mplayer_on_key: %d", key);
+    bar_show();
 
     switch (key) {
     case DIAL_KEY_PRESS:
@@ -408,9 +426,9 @@ void mplayer_file(char *fname) {
     int const retimed = media_retimed_hz(media);
     if (retimed) {
         // the live-video display path chroma-keys near-black pixels; the
-        // control bar's translucent dark grey blends to below the key
-        // threshold and vanishes - make it solid while retimed
-        lv_obj_set_style_opa(controller.bar, LV_OPA_COVER, 0);
+        // stock 35% bar blends to below the key threshold over dark video
+        // and vanishes. 70% keeps it translucent but above the key.
+        lv_obj_set_style_opa(controller.bar, LV_OPA_70, 0);
     }
     if (retimed == 90) {
 #if defined(HDZGOGGLE)
@@ -429,9 +447,14 @@ void mplayer_file(char *fname) {
     }
     media_start();
     update_mplayer();
+    bar_hide_timer = lv_timer_create(bar_hide_cb, BAR_HIDE_MS, NULL);
 }
 
 void mplayer_exit() {
+    if (bar_hide_timer) {
+        lv_timer_del(bar_hide_timer);
+        bar_hide_timer = NULL;
+    }
     // never leave a bench display mode running outside the player
     const char *desc = NULL;
     Display_UI_BenchRestore(&desc);
