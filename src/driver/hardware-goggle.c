@@ -622,14 +622,16 @@ void Display_720P60_50_t(int mode, uint8_t is_43);
 static int bench_idx = 0;
 
 static const char *const bench_desc[] = {
-    "0: normal playback (green clouds)",
-    "1: chroma FIR filter ON",
-    "2: OSD ctrl 0x84=0x01",
-    "3: OSD ctrl 0x84=0x31",
-    "4: OSD ctrl 0x84=0x51",
-    "5: FIR filter ON + 0x84=0x01",
-    "6: vdpo drive 0x3fff",
-    "7: OSD ctrl 0x84=0x91",
+    "0: STOCK (green) - reference",
+    "1: VDPO 2018=0x00 chroma proc off",
+    "2: VDPO 2018=0x04",
+    "3: VDPO 2018=0x40",
+    "4: VDPO 201c=0x00 (range/clamp?)",
+    "5: VDPO 201c=0x01",
+    "6: VDPO 2014=0x00",
+    "7: VDPO 2010=0x00",
+    "8: VDPO 2020=0x00",
+    "9: VDPO 2020=0x01",
 };
 #define BENCH_RECIPES (int)(sizeof(bench_desc) / sizeof(bench_desc[0]))
 
@@ -641,32 +643,40 @@ static void bench_apply(int idx) {
     // restores the stock playback registers.
     pthread_mutex_lock(&hardware_mutex);
 
+    // The green is superwhite overflow in the SoC video-display-processor's
+    // YUV->RGB step. The VDPO colour block lives at 0x0654_20xx (0x2018 is
+    // the known chroma FIR control), so sweep that block for a range/clamp
+    // bit. Each poke is live over the playing video; recipe 0 restores stock.
     switch (idx) {
-    case 0: // stock playback registers (what SetMode applies)
-        I2C_Write(ADDR_FPGA, 0x84, 0x11);
-        system_exec("aww 0x06542018 0x00000044"); // chroma FIR filter OFF (stock)
+    case 0:
+        system_exec("aww 0x06542018 0x00000044"); // stock
         break;
-    case 1: // re-enable the horizontal chroma FIR filter
+    case 1:
         system_exec("aww 0x06542018 0x00000000");
         break;
     case 2:
-        I2C_Write(ADDR_FPGA, 0x84, 0x01);
+        system_exec("aww 0x06542018 0x00000004");
         break;
     case 3:
-        I2C_Write(ADDR_FPGA, 0x84, 0x31);
+        system_exec("aww 0x06542018 0x00000040");
         break;
     case 4:
-        I2C_Write(ADDR_FPGA, 0x84, 0x51);
+        system_exec("aww 0x0654201c 0x00000000");
         break;
     case 5:
-        I2C_Write(ADDR_FPGA, 0x84, 0x01);
-        system_exec("aww 0x06542018 0x00000000");
+        system_exec("aww 0x0654201c 0x00000001");
         break;
     case 6:
-        system_exec("aww 0x0300b084 0x00003fff");
+        system_exec("aww 0x06542014 0x00000000");
         break;
     case 7:
-        I2C_Write(ADDR_FPGA, 0x84, 0x91);
+        system_exec("aww 0x06542010 0x00000000");
+        break;
+    case 8:
+        system_exec("aww 0x06542020 0x00000000");
+        break;
+    case 9:
+        system_exec("aww 0x06542020 0x00000001");
         break;
     default:
         break;
