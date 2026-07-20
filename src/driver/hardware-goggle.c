@@ -622,16 +622,16 @@ void Display_720P60_50_t(int mode, uint8_t is_43);
 static int bench_idx = 0;
 
 static const char *const bench_desc[] = {
-    "0: STOCK + dump regs to hwlog",
-    "1: 201c=0x00000010",
-    "2: 201c=0x00000100",
-    "3: 201c=0x00001000",
-    "4: 201c=0x00010000",
-    "5: 201c=0x01000000",
-    "6: 201c=0x10101010",
-    "7: 201c=0x00000101",
-    "8: 201c stock|0x01 (nudge)",
-    "9: 201c=0xffffffff",
+    "0: STOCK (limited range, green)",
+    "1: 2020 full 0x00ff0000",
+    "2: 2024 full 0x00ff0000",
+    "3: 2020+2024 full <-- likely fix",
+    "4: 2020+2024 = 0x03ff0000",
+    "5: 2020+2024 = 0x00ff0000, 2028 full",
+    "6: 2020+2024 min0 only 0x00f00000",
+    "7: 2020+2024 max255 only 0x00ff0010",
+    "8: 2020 0x00ff0000 2024 0x00f00010",
+    "9: all range regs full",
 };
 #define BENCH_RECIPES (int)(sizeof(bench_desc) / sizeof(bench_desc[0]))
 
@@ -652,45 +652,52 @@ static void bench_apply(int idx) {
     // clamps superwhite without wrecking the image. Recipe 0 restores
     // stock AND dumps the colour-register block to the SD log so the
     // baseline values are known - read them back to design the exact fix.
+    // The dump showed 0x2020 and 0x2024 = 0x00f00010 (max 240, min 16):
+    // classic LIMITED-range bounds. The recordings are full range (0-255),
+    // so full-range highs get over-expanded and overflow to green. These
+    // probes set the bounds to full range (max 255, min 0) to stop it.
     switch (idx) {
-    case 0:
-        system_exec("aww 0x0654201c 0x00000044"); // restore (matches 0x2018 stock family; overwritten by SetMode anyway)
-        system_exec("aww 0x06542018 0x00000044");
-        // dump the block to the SD log
-        system_exec("for a in 06542010 06542014 06542018 0654201c 06542020 06542024 06542028 0654202c 06542030; do "
-                    "echo 0x$a > /sys/class/sunxi_dump/dump; "
-                    "printf 'REG 0x%s = ' $a >> /mnt/extsd/hwlog.txt; "
-                    "cat /sys/class/sunxi_dump/dump >> /mnt/extsd/hwlog.txt; done");
+    case 0: // restore stock limited-range bounds
+        system_exec("aww 0x06542020 0x00f00010");
+        system_exec("aww 0x06542024 0x00f00010");
+        system_exec("aww 0x06542028 0x04ff0355");
         break;
     case 1:
-        system_exec("aww 0x0654201c 0x00000010");
+        system_exec("aww 0x06542020 0x00ff0000");
         break;
     case 2:
-        system_exec("aww 0x0654201c 0x00000100");
+        system_exec("aww 0x06542024 0x00ff0000");
         break;
-    case 3:
-        system_exec("aww 0x0654201c 0x00001000");
+    case 3: // both to full range - prime candidate
+        system_exec("aww 0x06542020 0x00ff0000");
+        system_exec("aww 0x06542024 0x00ff0000");
         break;
-    case 4:
-        system_exec("aww 0x0654201c 0x00010000");
+    case 4: // 10-bit full range
+        system_exec("aww 0x06542020 0x03ff0000");
+        system_exec("aww 0x06542024 0x03ff0000");
         break;
     case 5:
-        system_exec("aww 0x0654201c 0x01000000");
+        system_exec("aww 0x06542020 0x00ff0000");
+        system_exec("aww 0x06542024 0x00ff0000");
+        system_exec("aww 0x06542028 0x04ff0000");
         break;
-    case 6:
-        system_exec("aww 0x0654201c 0x10101010");
+    case 6: // lower the black floor only (min 0)
+        system_exec("aww 0x06542020 0x00f00000");
+        system_exec("aww 0x06542024 0x00f00000");
         break;
-    case 7:
-        system_exec("aww 0x0654201c 0x00000101");
+    case 7: // raise the ceiling only (max 255)
+        system_exec("aww 0x06542020 0x00ff0010");
+        system_exec("aww 0x06542024 0x00ff0010");
         break;
     case 8:
-        // read-modify-write: set bit0 on whatever the stock value is
-        system_exec("echo 0x0654201c > /sys/class/sunxi_dump/dump; "
-                    "v=$(cat /sys/class/sunxi_dump/dump | sed 's/.*: *//'); "
-                    "aww 0x0654201c $(printf '0x%08x' $(( $v | 0x1 )))");
+        system_exec("aww 0x06542020 0x00ff0000");
+        system_exec("aww 0x06542024 0x00f00010");
         break;
     case 9:
-        system_exec("aww 0x0654201c 0xffffffff");
+        system_exec("aww 0x06542020 0x00ff0000");
+        system_exec("aww 0x06542024 0x00ff0000");
+        system_exec("aww 0x06542028 0x04ff0000");
+        system_exec("aww 0x0654202c 0x02ff0000");
         break;
     default:
         break;
