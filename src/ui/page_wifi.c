@@ -704,6 +704,7 @@ typedef struct {
     bool active;
     bool saved_view;
     bool bootstrapped;
+    bool wpa_seen;
     bool password_pending;
     lv_obj_t *container;
     lv_obj_t *title;
@@ -772,9 +773,15 @@ static void page_wifi_scan_render() {
     int row = 0;
 
     if (!page_wifi_scan.saved_view) {
+        const char *status = "";
+        if (!page_wifi_scan.entry_count) {
+            // 12s with no supplicant reply means the radio never came up
+            status = (!page_wifi_scan.wpa_seen && page_wifi_scan.ticks > 24)
+                         ? _lang("WiFi not responding - is the module fitted?")
+                         : _lang("Searching");
+        }
         snprintf(buf, sizeof(buf), "%s %s",
-                 _lang("Select WiFi Network"),
-                 page_wifi_scan.entry_count ? "" : _lang("Searching"));
+                 _lang("Select WiFi Network"), status);
         lv_label_set_text(page_wifi_scan.title, buf);
 
         page_wifi_scan.visible_rows = page_wifi_scan.entry_count + WIFI_SCAN_FIXED_ROWS;
@@ -845,9 +852,13 @@ static void page_wifi_scan_bootstrap() {
     fprintf(fp, "insmod /mnt/app/ko/xradio_wlan.ko\n");
     fprintf(fp, "ifconfig wlan0 up\n");
     fprintf(fp, "mkdir -p /var/log\n");
-    fprintf(fp, "if [ ! -e /var/log/wpa_supplicant/wlan0 ]; then\n");
+    // This only runs when nothing answered PING: any existing supplicant
+    // is dead or orphaned - and wlan_stop.sh leaves its stale control
+    // socket behind, which would keep a fresh one from ever starting.
+    fprintf(fp, "killall wpa_supplicant\n");
+    fprintf(fp, "sleep 1\n");
+    fprintf(fp, "rm -rf /var/log/wpa_supplicant\n");
     fprintf(fp, "wpa_supplicant -Dnl80211 -iwlan0 -c/tmp/wpa_supplicant.conf&\n");
-    fprintf(fp, "fi\n");
     fclose(fp);
     system_exec("chmod +x " WIFI_SCAN_ON);
     system_script(WIFI_SCAN_ON);
@@ -858,6 +869,7 @@ static void page_wifi_scan_open() {
     page_wifi_scan.active = true;
     page_wifi_scan.saved_view = false;
     page_wifi_scan.bootstrapped = false;
+    page_wifi_scan.wpa_seen = false;
     page_wifi_scan.selected = 0;
     page_wifi_scan.entry_count = 0;
     page_wifi_scan.ticks = 0;
@@ -893,8 +905,12 @@ static void page_wifi_scan_timer_cb(struct _lv_timer_t *timer) {
             page_wifi_scan.bootstrapped = true;
             page_wifi_scan_bootstrap();
         }
+        if (!page_wifi_scan.wpa_seen && page_wifi_scan.ticks == 25) {
+            page_wifi_scan_render(); // surface the not-responding hint
+        }
         return;
     }
+    page_wifi_scan.wpa_seen = true;
     page_wifi_scan.bootstrapped = true;
 
     // Rescan every ~8 seconds while the overlay is up
