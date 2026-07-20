@@ -700,23 +700,25 @@ int Display_UI_BenchRestore(const char **desc) {
     return 0;
 }
 
-static bool playback_opened_bb = false;
-
 void Display_Playback_SetMode(int hz) {
     pthread_mutex_lock(&hardware_mutex);
     screen.display(0);
 
-    Display_UI_init();
     if (hz) {
         // The G1 FPGA idles its video input on a green raster, and the
         // overlay chroma-key punches near-black pixels through to it -
         // dark video areas glow green (goggles2 idles black, so this never
         // showed there). With the baseband running, keyed-through pixels
         // land on a true black mute raster instead (bench recipes 2/4).
-        if (!g_hw_stat.hdzero_open) {
+        //
+        // The baseband stays open across playbacks on purpose: DM6302
+        // bring-up costs seconds, so only the first file pays it. Race
+        // mode reuses or reopens it as needed. The mode switch also goes
+        // straight from the menu timing - the same transition the live
+        // race path makes daily - rather than resetting to the UI
+        // baseline first.
+        if (!g_hw_stat.hdzero_open)
             HDZero_open(g_setting.source.hdzero_bw);
-            playback_opened_bb = true;
-        }
         if (hz == 90)
             Display_720P90_t(VR_540P90);
         else
@@ -728,9 +730,8 @@ void Display_Playback_SetMode(int hz) {
         // the monitor leaves playback alone (M0 and the mute raster are
         // already up and unaffected).
         g_hw_stat.source_mode = SOURCE_MODE_UI;
-    } else if (playback_opened_bb) {
-        HDZero_Close();
-        playback_opened_bb = false;
+    } else {
+        Display_UI_init();
     }
 
     screen.display(1);
