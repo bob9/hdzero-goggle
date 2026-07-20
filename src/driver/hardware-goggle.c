@@ -3,9 +3,11 @@
 #if HDZGOGGLE
 
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <log/log.h>
@@ -37,6 +39,30 @@ hw_status_t g_hw_stat;
 int fhd_req = 0;
 // local
 pthread_mutex_t hardware_mutex;
+
+// Hardware transition log on the SD card: every receiver open/close and
+// display-mode entry, stamped with seconds since boot. Un-commanded mode
+// entries during playback are exactly what this exists to catch. Each
+// line is synced immediately so a power pull loses nothing.
+static void hwlog(const char *fmt, ...) {
+    FILE *f = fopen("/mnt/extsd/hwlog.txt", "a");
+    if (!f)
+        return;
+
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    fprintf(f, "[%6ld.%03ld] ", (long)ts.tv_sec, ts.tv_nsec / 1000000L);
+
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+
+    fputc('\n', f);
+    fflush(f);
+    fsync(fileno(f));
+    fclose(f);
+}
 
 uint32_t vclk_phase_default[VIDEO_SOURCE_NUM] = {
     // 0x8d,  0x8e,  0x14,  hdmi_out
@@ -569,6 +595,7 @@ void hw_screen_on(int bON) {
 }
 
 void Display_UI_init() {
+    hwlog("Display_UI_init (src=%d bb=%d)", g_hw_stat.source_mode, g_hw_stat.hdzero_open);
     g_hw_stat.source_mode = SOURCE_MODE_UI;
     I2C_Write(ADDR_FPGA, 0x8C, 0x00);
 
@@ -688,6 +715,7 @@ static void bench_apply(int idx) {
     screen.display(1);
     pthread_mutex_unlock(&hardware_mutex);
 
+    hwlog("bench recipe %d: %s", idx, bench_desc[idx]);
     LOGI("bench recipe %d: %s", idx, bench_desc[idx]);
     beep_dur(idx ? BEEP_SHORT : BEEP_LONG); // long beep = back on stock timing
 }
@@ -716,8 +744,10 @@ int Display_UI_BenchRestore(const char **desc) {
 static void *playback_prewarm_thread(void *arg) {
     (void)arg;
     pthread_mutex_lock(&hardware_mutex);
+    hwlog("prewarm start (src=%d bb=%d)", g_hw_stat.source_mode, g_hw_stat.hdzero_open);
     if ((g_hw_stat.source_mode == SOURCE_MODE_UI) && !g_hw_stat.hdzero_open)
         HDZero_open(g_setting.source.hdzero_bw);
+    hwlog("prewarm done");
     pthread_mutex_unlock(&hardware_mutex);
     return NULL;
 }
@@ -731,7 +761,10 @@ void Display_Playback_Prewarm(void) {
 }
 
 void Display_Playback_SetMode(int hz) {
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
     pthread_mutex_lock(&hardware_mutex);
+    hwlog("Playback_SetMode %dHz start (src=%d bb=%d)", hz, g_hw_stat.source_mode, g_hw_stat.hdzero_open);
 
     if (hz && !g_hw_stat.hdzero_open) {
         // The G1 FPGA idles its video input on a green raster, and the
@@ -765,12 +798,16 @@ void Display_Playback_SetMode(int hz) {
     }
 
     screen.display(1);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    hwlog("Playback_SetMode %dHz done in %ldms", hz,
+          (t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000L);
     pthread_mutex_unlock(&hardware_mutex);
     LOGI("Display_Playback_SetMode: %dHz", hz ? hz : 50);
 }
 
 void Display_720P60_50_t(int mode, uint8_t is_43) // fps: 0=50, 1=60
 {
+    hwlog("Display_720P60_50_t mode=%d 43=%d (src=%d bb=%d)", mode, is_43, g_hw_stat.source_mode, g_hw_stat.hdzero_open);
     screen.display(0);
     I2C_Write(ADDR_FPGA, 0x8C, 0x00);
 
@@ -798,6 +835,7 @@ void Display_720P60_50_t(int mode, uint8_t is_43) // fps: 0=50, 1=60
 }
 
 void Display_720P90_t(int mode) {
+    hwlog("Display_720P90_t mode=%d (src=%d bb=%d)", mode, g_hw_stat.source_mode, g_hw_stat.hdzero_open);
     screen.display(0);
     I2C_Write(ADDR_FPGA, 0x8C, 0x00);
 
@@ -820,6 +858,7 @@ void Display_720P90_t(int mode) {
 }
 
 void Display_1080P30_t(int mode) {
+    hwlog("Display_1080P30_t mode=%d (src=%d bb=%d)", mode, g_hw_stat.source_mode, g_hw_stat.hdzero_open);
     screen.display(0);
     I2C_Write(ADDR_FPGA, 0x8C, 0x00);
 
@@ -844,6 +883,7 @@ void Display_1080P30_t(int mode) {
 }
 
 void Display_1080P24_t(int mode) {
+    hwlog("Display_1080P24_t mode=%d (src=%d bb=%d)", mode, g_hw_stat.source_mode, g_hw_stat.hdzero_open);
     screen.display(0);
     I2C_Write(ADDR_FPGA, 0x8C, 0x00);
 
@@ -896,16 +936,22 @@ void HDZero_open(int bw) {
         HDZero_Close();
 
     if (g_hw_stat.hdzero_open == 0) {
+        struct timespec t0, t1;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
         g_hw_stat.hdz_bw = bw;
         DM5680_SetBR(g_hw_stat.hdz_bw);
         DM6302_init(0, g_hw_stat.hdz_bw);
         DM5680_SetBB(1);
         g_hw_stat.hdzero_open = 1;
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        hwlog("HDZero_open bw=%d took %ldms", bw,
+              (t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000L);
         LOGI("HDZero: open");
     }
 }
 
 void HDZero_Close() {
+    hwlog("HDZero_Close");
     DM5680_SetBB(0);
     DM5680_ResetRF(0);
     g_hw_stat.hdzero_open = 0;
