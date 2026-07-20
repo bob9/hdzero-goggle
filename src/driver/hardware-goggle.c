@@ -721,6 +721,13 @@ void Display_Playback_SetMode(int hz) {
             Display_720P90_t(VR_540P90);
         else
             Display_1080P30_t(VR_1080P30);
+        // The race functions mark source_mode HDZERO, which makes the
+        // hardware monitor thread treat playback as live race mode - with
+        // the baseband running it may see camera-mode telemetry and
+        // reprogram the display mid-video. Mark the source back as UI so
+        // the monitor leaves playback alone (M0 and the mute raster are
+        // already up and unaffected).
+        g_hw_stat.source_mode = SOURCE_MODE_UI;
     } else if (playback_opened_bb) {
         HDZero_Close();
         playback_opened_bb = false;

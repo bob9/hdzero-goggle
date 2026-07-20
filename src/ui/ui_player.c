@@ -424,12 +424,6 @@ void mplayer_file(char *fname) {
     init_mplayer();
     media_init(fname);
     int const retimed = media_retimed_hz(media);
-    if (retimed) {
-        // the live-video display path chroma-keys near-black pixels; the
-        // stock 35% bar blends to below the key threshold over dark video
-        // and vanishes. 70% keeps it translucent but above the key.
-        lv_obj_set_style_opa(controller.bar, LV_OPA_70, 0);
-    }
     if (retimed == 90) {
 #if defined(HDZGOGGLE)
         // The G1 DE wraps a 1920-stride framebuffer at this mode's
