@@ -590,6 +590,10 @@ int Display_UI_BenchRestore(const char **desc) {
 void Display_720P90_t(int mode);
 void Display_1080P30_t(int mode);
 
+// goggles2 needs no baseband for playback - nothing to warm up.
+void Display_Playback_Prewarm(void) {
+}
+
 // Playback display modes, hardware-verified (9.5.11 bench, 9.5.12 field):
 // 1080p60 pixel-perfect; 720p90 needs the VO layer sized 1280x720 and shows
 // the top-left 1280x720 of the UI layout. Baseband stays off - the VRX mute

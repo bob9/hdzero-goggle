@@ -96,6 +96,7 @@ void Display_UI();
 // locks 1080p50. 90 = video-path 720p90 (caller must size the VO layer
 // 1280x720), 60 = video-path 1080p60, 0 = restore the stock menu UI.
 void Display_Playback_SetMode(int hz);
+void Display_Playback_Prewarm(void); // background bring-up of anything SetMode would block on; call when the playback page opens
 
 // DVR display bring-up bench: step through candidate display-mode recipes
 // on live hardware (right-button during playback). Returns the applied

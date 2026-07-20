@@ -708,25 +708,47 @@ int Display_UI_BenchRestore(const char **desc) {
     return 0;
 }
 
+// Bring the baseband up in the background while the user is still on the
+// playback list, so the first video pays no bring-up pause. SetMode also
+// opens it if the prewarm has not run or finished - serialized by
+// hardware_mutex - and does so BEFORE blanking the panel, so any wait
+// happens on the visible menu instead of a black screen.
+static void *playback_prewarm_thread(void *arg) {
+    (void)arg;
+    pthread_mutex_lock(&hardware_mutex);
+    if ((g_hw_stat.source_mode == SOURCE_MODE_UI) && !g_hw_stat.hdzero_open)
+        HDZero_open(g_setting.source.hdzero_bw);
+    pthread_mutex_unlock(&hardware_mutex);
+    return NULL;
+}
+
+void Display_Playback_Prewarm(void) {
+    if (g_hw_stat.hdzero_open)
+        return;
+    pthread_t tid;
+    if (pthread_create(&tid, NULL, playback_prewarm_thread, NULL) == 0)
+        pthread_detach(tid);
+}
+
 void Display_Playback_SetMode(int hz) {
     pthread_mutex_lock(&hardware_mutex);
-    screen.display(0);
 
-    if (hz) {
+    if (hz && !g_hw_stat.hdzero_open) {
         // The G1 FPGA idles its video input on a green raster, and the
         // overlay chroma-key punches near-black pixels through to it -
         // dark video areas glow green (goggles2 idles black, so this never
-        // showed there). With the baseband running, keyed-through pixels
-        // land on a true black mute raster instead (bench recipes 2/4).
-        //
-        // The baseband stays open across playbacks on purpose: DM6302
-        // bring-up costs seconds, so only the first file pays it. Race
-        // mode reuses or reopens it as needed. The mode switch also goes
-        // straight from the menu timing - the same transition the live
-        // race path makes daily - rather than resetting to the UI
-        // baseline first.
-        if (!g_hw_stat.hdzero_open)
-            HDZero_open(g_setting.source.hdzero_bw);
+        // showed there). With the baseband running (or having run: a
+        // closed baseband leaves a black mute raster), keyed-through
+        // pixels land on black. Opened here only if the prewarm missed;
+        // stays open across playbacks so the cost is paid at most once.
+        HDZero_open(g_setting.source.hdzero_bw);
+    }
+
+    screen.display(0);
+
+    if (hz) {
+        // Switch straight from the menu timing - the same transition the
+        // live race path makes daily - no UI-baseline reset first.
         if (hz == 90)
             Display_720P90_t(VR_540P90);
         else

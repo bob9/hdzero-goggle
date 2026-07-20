@@ -612,6 +612,9 @@ void Display_Playback_SetMode(int hz) {
     (void)hz;
 }
 
+void Display_Playback_Prewarm(void) {
+}
+
 // No retime bench either, for the same reason.
 int Display_UI_BenchNext(const char **desc) {
     (void)desc;

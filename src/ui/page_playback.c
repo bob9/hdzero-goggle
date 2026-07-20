@@ -16,6 +16,7 @@
 #include "common.hh"
 #include "core/app_state.h"
 #include "core/osd.h"
+#include "driver/hardware.h"
 #include "lang/language.h"
 #include "record/record_definitions.h"
 #include "ui/page_common.h"
@@ -426,6 +427,10 @@ static void page_playback_exit() {
 }
 
 static void page_playback_enter() {
+    // Warm the playback display path in the background while the user
+    // browses - by selection time the first video needs no bring-up pause.
+    Display_Playback_Prewarm();
+
     const int ret = walk_sdcard();
     update_page();
 
