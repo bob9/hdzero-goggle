@@ -1,6 +1,8 @@
 #include "page_power.h"
 
+#include <pthread.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #include <log/log.h>
 #include <minIni.h>
@@ -16,6 +18,8 @@
 #include "lang/language.h"
 #include "page_common.h"
 #include "ui/ui_style.h"
+#include "util/sdcard.h"
+#include "util/system.h"
 
 #define WARNING_CELL_VOLTAGE_MIN 2800
 #define WARNING_CELL_VOLTAGE_MAX 4200
@@ -31,6 +35,7 @@ enum {
     ROW_OSD_DISPLAY_MODE,
     ROW_WARN_TYPE,
     ROW_POWER_ANA,
+    ROW_SHUTDOWN,
     ROW_BACK,
 
     ROW_COUNT
@@ -45,6 +50,11 @@ static btn_group_t btn_group_warn_type;
 static btn_group_t btn_group_power_ana;
 
 static slider_group_t *selected_slider_group = NULL;
+
+// Safe shutdown: once triggered, the page swallows all input and the
+// full-screen notice is the last thing the goggles display.
+static bool shutdown_active = false;
+static lv_obj_t *shutdown_label = NULL;
 
 static lv_coord_t col_dsc[] = {UI_POWER_COLS};
 static lv_coord_t row_dsc[] = {UI_POWER_ROWS};
@@ -84,6 +94,67 @@ static void page_power_update_calibration_offset() {
     char buf[7];
     snprintf(buf, sizeof(buf), "%.2fV", g_battery.offset / 1000.0);
     lv_label_set_text(slider_group_calibration_offset.label, buf);
+}
+
+static void *page_power_shutdown_thread(void *arg) {
+    (void)arg;
+
+    // The same prologue the SD integrity check uses to quiesce the
+    // recorder before an unmount, plus the live stream.
+    system_exec("/mnt/app/app/record/gogglecmd -live quit");
+    system_exec("/mnt/app/app/record/gogglecmd -rec quit");
+    system_exec("/mnt/app/app/record/gogglecmd -sds quit");
+    sleep(2);
+    system_exec("killall rtspLive 2>/dev/null");
+    system_exec("sync");
+
+    bool safe = true;
+    if (sdcard_mounted()) {
+        safe = system_exec("umount /mnt/extsd") == 0;
+        if (!safe) {
+            // busy card: stop the writers the hard way and retry once
+            system_exec("killall record sdstat 2>/dev/null");
+            sleep(1);
+            system_exec("sync");
+            safe = system_exec("umount /mnt/extsd") == 0;
+        }
+    }
+
+    pthread_mutex_lock(&lvgl_mutex);
+    if (shutdown_label) {
+        lv_label_set_text(shutdown_label,
+                          safe ? "SD card released - it is now safe\nto turn the goggles off."
+                               : "Could not release the SD card.\nStop recording, then power off.");
+    }
+    pthread_mutex_unlock(&lvgl_mutex);
+    pthread_exit(NULL);
+}
+
+static void page_power_shutdown() {
+    if (shutdown_active) {
+        return;
+    }
+    shutdown_active = true;
+
+    lv_obj_t *cover = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(cover, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_pos(cover, 0, 0);
+    lv_obj_set_style_bg_color(cover, lv_color_hex(0x010101), 0);
+    lv_obj_set_style_bg_opa(cover, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(cover, 0, 0);
+    lv_obj_set_style_radius(cover, 0, 0);
+
+    shutdown_label = lv_label_create(cover);
+    lv_label_set_text(shutdown_label, "Shutting down...");
+    lv_obj_set_style_text_font(shutdown_label, &lv_font_montserrat_26, 0);
+    lv_obj_set_style_text_align(shutdown_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(shutdown_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_center(shutdown_label);
+
+    pthread_t tid;
+    if (pthread_create(&tid, NULL, page_power_shutdown_thread, NULL) == 0) {
+        pthread_detach(tid);
+    }
 }
 
 static lv_obj_t *page_power_create(lv_obj_t *parent, panel_arr_t *arr) {
@@ -134,6 +205,10 @@ static lv_obj_t *page_power_create(lv_obj_t *parent, panel_arr_t *arr) {
 #elif defined(HDZBOXPRO)
     pp_power.p_arr.max = ROW_COUNT - 1;
 #endif
+
+    // Shutdown entry (always second-to-last, before Back)
+    snprintf(buf, sizeof(buf), "%s", _lang("Shutdown (release SD card)"));
+    create_label_item(cont, buf, 1, pp_power.p_arr.max - 2, 1);
 
     // Back entry
     snprintf(buf, sizeof(buf), "< %s", _lang("Back"));
@@ -287,9 +362,18 @@ static void page_power_on_roller(uint8_t key) {
 }
 
 static void page_power_on_click(uint8_t key, int sel) {
+    if (shutdown_active) {
+        return;
+    }
 
     if (selected_slider_group != NULL) {
         page_power_exit_slider();
+        return;
+    }
+
+    // positional: the shutdown row sits right before Back on every hw rev
+    if (sel == pp_power.p_arr.max - 2) {
+        page_power_shutdown();
         return;
     }
 
