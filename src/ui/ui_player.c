@@ -11,7 +11,12 @@
 #include "driver/hardware.h"
 #include "player/media.h"
 #include "record/record_definitions.h"
+#include "ui/ui_porting.h"
 #include "ui/ui_style.h"
+
+#if defined(HDZGOGGLE)
+static bool lvgl_at_720p = false;
+#endif
 
 ///////////////////////////////////////////////////////////////////////////////
 // locals
@@ -409,16 +414,18 @@ void mplayer_file(char *fname) {
     }
     if (retimed == 90) {
 #if defined(HDZGOGGLE)
-        // The G1 panel conversion for this mode is 540-line based and
-        // shows less of the raster vertically than goggles2 - a bar at
-        // y=560 falls off the bottom while video still fills the screen.
-        // Park it in the top-left region the bench label proved visible.
-        lv_obj_set_pos(controller.bar, 20, 430);
-#else
+        // The G1 DE wraps a 1920-stride framebuffer at this mode's
+        // 1280-wide scanout - the control bar rendered comb-torn and
+        // doubled. Re-render the UI at 1280x720 exactly like the race
+        // OSD does in this display mode (app_state does the same when
+        // entering live 720p90). goggles2 crops the 1920 layout cleanly
+        // and stays as field-verified.
+        lvgl_switch_to_720p();
+        lvgl_at_720p = true;
+#endif
         // the 720p90 display mode scans out the top-left 1280x720 of the
         // layout; move the control bar up into the visible window
         lv_obj_set_pos(controller.bar, (1280 - UI_MPLAYER_CB_WIDTH) >> 1, 720 - 160);
-#endif
     }
     media_start();
     update_mplayer();
@@ -439,5 +446,11 @@ void mplayer_exit() {
         media = NULL;
     }
     pthread_mutex_lock(&lvgl_mutex);
+#if defined(HDZGOGGLE)
+    if (lvgl_at_720p) {
+        lvgl_switch_to_1080p();
+        lvgl_at_720p = false;
+    }
+#endif
     free_mplayer();
 }
