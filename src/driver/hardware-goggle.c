@@ -622,16 +622,16 @@ void Display_720P60_50_t(int mode, uint8_t is_43);
 static int bench_idx = 0;
 
 static const char *const bench_desc[] = {
-    "0: STOCK (green) - reference",
-    "1: VDPO 2018=0x00 chroma proc off",
-    "2: VDPO 2018=0x04",
-    "3: VDPO 2018=0x40",
-    "4: VDPO 201c=0x00 (range/clamp?)",
-    "5: VDPO 201c=0x01",
-    "6: VDPO 2014=0x00",
-    "7: VDPO 2010=0x00",
-    "8: VDPO 2020=0x00",
-    "9: VDPO 2020=0x01",
+    "0: STOCK + dump regs to hwlog",
+    "1: 201c=0x00000010",
+    "2: 201c=0x00000100",
+    "3: 201c=0x00001000",
+    "4: 201c=0x00010000",
+    "5: 201c=0x01000000",
+    "6: 201c=0x10101010",
+    "7: 201c=0x00000101",
+    "8: 201c stock|0x01 (nudge)",
+    "9: 201c=0xffffffff",
 };
 #define BENCH_RECIPES (int)(sizeof(bench_desc) / sizeof(bench_desc[0]))
 
@@ -647,36 +647,50 @@ static void bench_apply(int idx) {
     // YUV->RGB step. The VDPO colour block lives at 0x0654_20xx (0x2018 is
     // the known chroma FIR control), so sweep that block for a range/clamp
     // bit. Each poke is live over the playing video; recipe 0 restores stock.
+    // 0x0654201c is confirmed to drive the YUV->RGB colour conversion
+    // (writing 0 there crushed the picture). Sweep it for a value that
+    // clamps superwhite without wrecking the image. Recipe 0 restores
+    // stock AND dumps the colour-register block to the SD log so the
+    // baseline values are known - read them back to design the exact fix.
     switch (idx) {
     case 0:
-        system_exec("aww 0x06542018 0x00000044"); // stock
+        system_exec("aww 0x0654201c 0x00000044"); // restore (matches 0x2018 stock family; overwritten by SetMode anyway)
+        system_exec("aww 0x06542018 0x00000044");
+        // dump the block to the SD log
+        system_exec("for a in 06542010 06542014 06542018 0654201c 06542020 06542024 06542028 0654202c 06542030; do "
+                    "echo 0x$a > /sys/class/sunxi_dump/dump; "
+                    "printf 'REG 0x%s = ' $a >> /mnt/extsd/hwlog.txt; "
+                    "cat /sys/class/sunxi_dump/dump >> /mnt/extsd/hwlog.txt; done");
         break;
     case 1:
-        system_exec("aww 0x06542018 0x00000000");
+        system_exec("aww 0x0654201c 0x00000010");
         break;
     case 2:
-        system_exec("aww 0x06542018 0x00000004");
+        system_exec("aww 0x0654201c 0x00000100");
         break;
     case 3:
-        system_exec("aww 0x06542018 0x00000040");
+        system_exec("aww 0x0654201c 0x00001000");
         break;
     case 4:
-        system_exec("aww 0x0654201c 0x00000000");
+        system_exec("aww 0x0654201c 0x00010000");
         break;
     case 5:
-        system_exec("aww 0x0654201c 0x00000001");
+        system_exec("aww 0x0654201c 0x01000000");
         break;
     case 6:
-        system_exec("aww 0x06542014 0x00000000");
+        system_exec("aww 0x0654201c 0x10101010");
         break;
     case 7:
-        system_exec("aww 0x06542010 0x00000000");
+        system_exec("aww 0x0654201c 0x00000101");
         break;
     case 8:
-        system_exec("aww 0x06542020 0x00000000");
+        // read-modify-write: set bit0 on whatever the stock value is
+        system_exec("echo 0x0654201c > /sys/class/sunxi_dump/dump; "
+                    "v=$(cat /sys/class/sunxi_dump/dump | sed 's/.*: *//'); "
+                    "aww 0x0654201c $(printf '0x%08x' $(( $v | 0x1 )))");
         break;
     case 9:
-        system_exec("aww 0x06542020 0x00000001");
+        system_exec("aww 0x0654201c 0xffffffff");
         break;
     default:
         break;
