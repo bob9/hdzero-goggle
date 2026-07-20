@@ -2,6 +2,8 @@
 
 #include "ts_probe.h"
 
+#include "util/hwlog.h"
+
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -153,6 +155,12 @@ void *thread_media(void *params) {
     media_t *media = (media_t *)params;
     PlayContext_t *playCtx = (PlayContext_t *)media->context;
     notify_cb_t notify = media->notify;
+    // Stall detector: the hardware log proved the display/receiver stay
+    // silent during playback, so any freeze lives in the demux/decoder
+    // pipeline. Catch the video clock standing still and log when and
+    // for how long, plus what un-stuck it.
+    int stall_last_ms = -1;
+    int stall_ticks = 0;
     for (;;) {
         if (!media)
             break;
@@ -169,6 +177,22 @@ void *thread_media(void *params) {
         } else {
             playCtx->playingTime = -2;
         }
+
+        bool const rolling = (playCtx->state & PLAY_statSTARTED) &&
+                             !(playCtx->state & (PLAY_statPAUSED | PLAY_statCOMPLETED | PLAY_statSEEKING)) &&
+                             playCtx->playingTime > 0;
+        if (rolling && playCtx->playingTime == stall_last_ms) {
+            stall_ticks++;
+            if (stall_ticks == 5) { // ~500ms frozen: a real stall, not jitter
+                hwlog("playback stall at t=%dms", playCtx->playingTime);
+            }
+        } else {
+            if (stall_ticks >= 5) {
+                hwlog("playback resumed after ~%dms at t=%dms", stall_ticks * 100, playCtx->playingTime);
+            }
+            stall_ticks = 0;
+        }
+        stall_last_ms = rolling ? playCtx->playingTime : -1;
         pthread_mutex_unlock(&playCtx->mutex);
 
         // if(media->is_media_thread_exit)

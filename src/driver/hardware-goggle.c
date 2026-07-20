@@ -31,6 +31,7 @@
 #include "tp2825.h"
 #include "uart.h"
 #include "ui/ui_porting.h"
+#include "util/hwlog.h"
 #include "util/system.h"
 
 /////////////////////////////////////////////////////////////////////////
@@ -40,29 +41,9 @@ int fhd_req = 0;
 // local
 pthread_mutex_t hardware_mutex;
 
-// Hardware transition log on the SD card: every receiver open/close and
-// display-mode entry, stamped with seconds since boot. Un-commanded mode
-// entries during playback are exactly what this exists to catch. Each
-// line is synced immediately so a power pull loses nothing.
-static void hwlog(const char *fmt, ...) {
-    FILE *f = fopen("/mnt/extsd/hwlog.txt", "a");
-    if (!f)
-        return;
-
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    fprintf(f, "[%6ld.%03ld] ", (long)ts.tv_sec, ts.tv_nsec / 1000000L);
-
-    va_list ap;
-    va_start(ap, fmt);
-    vfprintf(f, fmt, ap);
-    va_end(ap);
-
-    fputc('\n', f);
-    fflush(f);
-    fsync(fileno(f));
-    fclose(f);
-}
+// Hardware transitions log to the shared SD-card diagnostic log
+// (util/hwlog): every receiver open/close and display-mode entry.
+// Un-commanded mode entries during playback are what this catches.
 
 uint32_t vclk_phase_default[VIDEO_SOURCE_NUM] = {
     // 0x8d,  0x8e,  0x14,  hdmi_out
@@ -749,7 +730,8 @@ static void playback_blacken_raster(void) { // hardware_mutex held
     if (playback_raster_black)
         return;
     if (g_hw_stat.hdzero_open) {
-        playback_raster_black = true; // the receiver already ran this boot
+        hwlog("raster already black - receiver ran this boot");
+        playback_raster_black = true;
         return;
     }
     HDZero_open(g_setting.source.hdzero_bw);
@@ -770,6 +752,7 @@ static void *playback_prewarm_thread(void *arg) {
 }
 
 void Display_Playback_Prewarm(void) {
+    hwlog("Prewarm called (raster_black=%d bb=%d)", playback_raster_black, g_hw_stat.hdzero_open);
     if (playback_raster_black)
         return;
     pthread_t tid;
