@@ -736,24 +736,41 @@ int Display_UI_BenchRestore(const char **desc) {
     return 0;
 }
 
-// Bring the baseband up in the background while the user is still on the
-// playback list, so the first video pays no bring-up pause. SetMode also
-// opens it if the prewarm has not run or finished - serialized by
-// hardware_mutex - and does so BEFORE blanking the panel, so any wait
-// happens on the visible menu instead of a black screen.
+// The receiver contributes nothing to playback - it only blackens the
+// raster the FPGA chroma-key punches through to, and the bench control
+// test proved the raster STAYS black after the receiver has run once
+// since boot and been shut down again. So: initialize once, close
+// immediately, and play back with the receiver off. Runs in the
+// background while the user is still on the playback list; SetMode
+// falls back to doing it synchronously BEFORE blanking the panel.
+static bool playback_raster_black = false;
+
+static void playback_blacken_raster(void) { // hardware_mutex held
+    if (playback_raster_black)
+        return;
+    if (g_hw_stat.hdzero_open) {
+        playback_raster_black = true; // the receiver already ran this boot
+        return;
+    }
+    HDZero_open(g_setting.source.hdzero_bw);
+    HDZero_Close();
+    playback_raster_black = true;
+    hwlog("raster blackened - receiver back off");
+}
+
 static void *playback_prewarm_thread(void *arg) {
     (void)arg;
     pthread_mutex_lock(&hardware_mutex);
     hwlog("prewarm start (src=%d bb=%d)", g_hw_stat.source_mode, g_hw_stat.hdzero_open);
-    if ((g_hw_stat.source_mode == SOURCE_MODE_UI) && !g_hw_stat.hdzero_open)
-        HDZero_open(g_setting.source.hdzero_bw);
+    if (g_hw_stat.source_mode == SOURCE_MODE_UI)
+        playback_blacken_raster();
     hwlog("prewarm done");
     pthread_mutex_unlock(&hardware_mutex);
     return NULL;
 }
 
 void Display_Playback_Prewarm(void) {
-    if (g_hw_stat.hdzero_open)
+    if (playback_raster_black)
         return;
     pthread_t tid;
     if (pthread_create(&tid, NULL, playback_prewarm_thread, NULL) == 0)
@@ -766,15 +783,14 @@ void Display_Playback_SetMode(int hz) {
     pthread_mutex_lock(&hardware_mutex);
     hwlog("Playback_SetMode %dHz start (src=%d bb=%d)", hz, g_hw_stat.source_mode, g_hw_stat.hdzero_open);
 
-    if (hz && !g_hw_stat.hdzero_open) {
+    if (hz) {
         // The G1 FPGA idles its video input on a green raster, and the
         // overlay chroma-key punches near-black pixels through to it -
-        // dark video areas glow green (goggles2 idles black, so this never
-        // showed there). With the baseband running (or having run: a
-        // closed baseband leaves a black mute raster), keyed-through
-        // pixels land on black. Opened here only if the prewarm missed;
-        // stays open across playbacks so the cost is paid at most once.
-        HDZero_open(g_setting.source.hdzero_bw);
+        // dark video areas glow green (goggles2 idles black, so this
+        // never showed there). One receiver init since boot leaves the
+        // raster black for good; only runs here if the prewarm missed,
+        // and before blanking so any wait shows the menu, not black.
+        playback_blacken_raster();
     }
 
     screen.display(0);
