@@ -50,7 +50,7 @@ static void bench_show(int idx, const char *desc) {
         return;
 
     snprintf(text, sizeof(text),
-             "Display test %d: %s\nright click = next, hold = restore", idx, desc);
+             "Chroma probe %s\nright click = next, hold = restore", desc);
     lv_label_set_text(bench_label, text);
     lv_obj_clear_flag(bench_label, LV_OBJ_FLAG_HIDDEN);
 }

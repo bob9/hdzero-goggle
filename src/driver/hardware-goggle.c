@@ -620,85 +620,62 @@ void Display_1080P30_t(int mode);
 void Display_720P60_50_t(int mode, uint8_t is_43);
 
 static int bench_idx = 0;
-static bool bench_opened_bb = false;
 
 static const char *const bench_desc[] = {
-    "stock 1080p50 UI",
-    "video path 720p90",
-    "video path 720p90 +BB",
-    "video path 1080p60",
-    "video path 1080p60 +BB",
-    "video path 720p60 +BB",
-    "control 0x11: bg MUST be GREEN",
-    "key probe 0x01: TEXT on BLACK = winner",
-    "key probe 0x13: TEXT on BLACK = winner",
-    "key probe 0x15: TEXT on BLACK = winner",
-    "key probe 0x19: TEXT on BLACK = winner",
-    "key probe 0x31: TEXT on BLACK = winner",
+    "0: normal playback (green clouds)",
+    "1: chroma FIR filter ON",
+    "2: OSD ctrl 0x84=0x01",
+    "3: OSD ctrl 0x84=0x31",
+    "4: OSD ctrl 0x84=0x51",
+    "5: FIR filter ON + 0x84=0x01",
+    "6: vdpo drive 0x3fff",
+    "7: OSD ctrl 0x84=0x91",
 };
 #define BENCH_RECIPES (int)(sizeof(bench_desc) / sizeof(bench_desc[0]))
 
 static void bench_apply(int idx) {
-    bool const wants_bb = (idx == 2) || (idx == 4) || (idx == 5);
-
+    // Chroma probe: the green speckle in bright clouds is a chroma/superwhite
+    // problem on the overlay path, so these pokes tweak the suspect registers
+    // WITHOUT tearing the display down - the video keeps playing and the
+    // clouds change under it, so the effect is visible immediately. Recipe 0
+    // restores the stock playback registers.
     pthread_mutex_lock(&hardware_mutex);
-    screen.display(0);
-
-    Display_UI_init(); // deterministic 1080p50 baseline for every recipe
-
-    // Close unconditionally, not just when the bench opened it: playback
-    // keeps the baseband warm, and a warm baseband gives the key probes a
-    // black raster behind everything - voiding the green/black readout.
-    if (!wants_bb && g_hw_stat.hdzero_open) {
-        HDZero_Close();
-        bench_opened_bb = false;
-    }
-    if (wants_bb && !g_hw_stat.hdzero_open) {
-        HDZero_open(g_setting.source.hdzero_bw);
-        bench_opened_bb = true;
-    }
 
     switch (idx) {
-    case 1:
+    case 0: // stock playback registers (what SetMode applies)
+        I2C_Write(ADDR_FPGA, 0x84, 0x11);
+        system_exec("aww 0x06542018 0x00000044"); // chroma FIR filter OFF (stock)
+        break;
+    case 1: // re-enable the horizontal chroma FIR filter
+        system_exec("aww 0x06542018 0x00000000");
+        break;
     case 2:
-        Display_720P90_t(VR_540P90);
+        I2C_Write(ADDR_FPGA, 0x84, 0x01);
         break;
     case 3:
+        I2C_Write(ADDR_FPGA, 0x84, 0x31);
+        break;
     case 4:
-        Display_1080P30_t(VR_1080P30);
+        I2C_Write(ADDR_FPGA, 0x84, 0x51);
         break;
     case 5:
-        Display_720P60_50_t(VR_720P60, 0);
+        I2C_Write(ADDR_FPGA, 0x84, 0x01);
+        system_exec("aww 0x06542018 0x00000000");
         break;
     case 6:
+        system_exec("aww 0x0300b084 0x00003fff");
+        break;
     case 7:
-    case 8:
-    case 9:
-    case 10:
-    case 11: {
-        // Chroma-key hunt, round 3: 720p90 with the baseband FORCED off,
-        // so keyed-through pixels show the FPGA's green idle raster.
-        // Round 1 (bit0 cleared) blanked the whole overlay; round 2 was
-        // void - playback's warm baseband gave every probe a black raster.
-        // Recipe 6 is the control at the stock value 0x11: it must show
-        // GREEN behind the text or the experiment premise is wrong. The
-        // probes keep bit0 (overlay enable) and toggle one bit each; the
-        // winner shows the text on a BLACK background.
-        static const uint8_t osd_probe[] = {0x11, 0x01, 0x13, 0x15, 0x19, 0x31};
-        Display_720P90_t(VR_540P90);
-        I2C_Write(ADDR_FPGA, 0x84, osd_probe[idx - 6]);
+        I2C_Write(ADDR_FPGA, 0x84, 0x91);
+        break;
+    default:
         break;
     }
-    default:
-        break; // recipe 0: the Display_UI_init baseline is the recipe
-    }
 
-    screen.display(1);
     pthread_mutex_unlock(&hardware_mutex);
 
     hwlog("bench recipe %d: %s", idx, bench_desc[idx]);
     LOGI("bench recipe %d: %s", idx, bench_desc[idx]);
-    beep_dur(idx ? BEEP_SHORT : BEEP_LONG); // long beep = back on stock timing
 }
 
 int Display_UI_BenchNext(const char **desc) {
