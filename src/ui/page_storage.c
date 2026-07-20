@@ -593,6 +593,17 @@ static void *page_storage_repair_thread(void *arg) {
 
     if (!page_storage.disable_controls) {
         page_storage.was_sd_repair_invoked = true;
+
+        // A cleanly ejected card has nothing to repair - skip the
+        // unmount/fsck/remount cycle and free the card seconds sooner.
+        // Goggle power-offs never unmount cleanly, so the full check
+        // still runs exactly when corruption is possible. The manual
+        // check from this page always runs in full.
+        if (!sdcard_filesystem_dirty()) {
+            LOGI("SD filesystem clean - auto integrity check skipped");
+            pthread_exit(NULL);
+        }
+
         page_storage.is_auto_sd_repair_active = true;
         pthread_mutex_lock(&lvgl_mutex);
         page_storage_disable_controls();

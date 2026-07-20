@@ -13,6 +13,7 @@ bool sdcard_inserted();
 void sdcard_update_free_size();
 int sdcard_free_size();
 bool sdcard_is_full();
+bool sdcard_filesystem_dirty(); // FAT clean-shutdown flag says a check is warranted; true when unsure
 
 #ifdef __cplusplus
 }
