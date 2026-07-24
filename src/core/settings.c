@@ -115,6 +115,7 @@ const setting_t g_setting_defaults = {
     },
     .elrs = {
         .enable = false,
+        .vtx_send_enable = true,
     },
     .ease = {
         .no_dial = 0,
@@ -231,13 +232,14 @@ const setting_t g_setting_defaults = {
         .sec = 30,
         .format = 0,
     },
-    // Refer to `page_input.c`'s arrays `rollerFunctionPointers` and `btnFunctionPointers`
+    // Refer to `page_input.c`'s action arrays. Channel selection only tunes the
+    // goggles; a deliberate right long-press sends that channel to the VTX.
     .inputs = {
         .roller = 0,
         .left_click = 0,
         .left_press = 1,
         .right_click = 2,
-        .right_press = 6,
+        .right_press = 11,
         .right_double_click = 3,
     },
     .wifi = {
@@ -614,6 +616,7 @@ void settings_load(void) {
 
     // elrs
     g_setting.elrs.enable = settings_get_bool("elrs", "enable", g_setting_defaults.elrs.enable);
+    g_setting.elrs.vtx_send_enable = settings_get_bool("elrs", "vtx_send_enable", g_setting_defaults.elrs.vtx_send_enable);
 
     // clock
     g_setting.clock.year = ini_getl("clock", "year", g_setting_defaults.clock.year, SETTING_INI);

@@ -56,6 +56,7 @@ static int rtc_open_dev(int idx, int flags) {
 
 #ifdef EMULATOR_BUILD
 static struct rtc_date g_rtc_date = {1970, 1, 1, 0, 0, 0};
+static struct timespec g_rtc_set_at = {0, 0};
 #endif
 
 /**
@@ -314,7 +315,16 @@ void rtc_timestamp() {
  */
 void rtc_set_clock(const struct rtc_date *rd) {
 #ifdef EMULATOR_BUILD
+    extern int64_t g_time_jump_offset_ms;
+    if (g_rtc_set_at.tv_sec != 0) {
+        struct rtc_date current;
+        rtc_get_clock(&current);
+        g_time_jump_offset_ms +=
+            ((int64_t)rtc_mktime(rd) - (int64_t)rtc_mktime(&current)) * 1000;
+    }
     g_rtc_date = *rd;
+    clock_gettime(CLOCK_MONOTONIC, &g_rtc_set_at);
+    g_rtc_has_battery = 1;
 #else
     struct rtc_time rt;
     struct timeval tv;
@@ -372,7 +382,13 @@ void rtc_set_clock(const struct rtc_date *rd) {
  */
 void rtc_get_clock(struct rtc_date *rd) {
 #ifdef EMULATOR_BUILD
-    *rd = g_rtc_date;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    struct timeval tv = {
+        .tv_sec = rtc_mktime(&g_rtc_date) + (now.tv_sec - g_rtc_set_at.tv_sec),
+        .tv_usec = 0,
+    };
+    rtc_tv2rd(&tv, rd);
 #else
     // Deterministic epoch on any failure, so a total read failure (e.g.
     // first boot after battery insertion, RTC_RD_TIME returns -EINVAL)

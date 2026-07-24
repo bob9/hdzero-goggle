@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -67,7 +68,7 @@ typedef struct
     pthread_mutex_t mutex;
 
     int playingTime; // ms
-    bool retimed;    // true while the panel refresh is switched to match this clip
+    int retimedHz;   // nonzero while the panel refresh is switched for this clip
 } PlayContext_t;
 
 static int play_start(PlayContext_t *playCtx) {
@@ -245,10 +246,29 @@ media_t *media_instantiate(char *filename, notify_cb_t notify) {
         int voWidth = VO_WIDTH;
         int voHeight = VO_HEIGHT;
 #if PLAY_HDZERO
-        // Match the panel refresh to the clip so playback isn't judder-capped by
-        // the UI panel mode; Display_UI() restores it on exit.
         int fps = playCtx->dmx->fps;
-        playCtx->retimed = Display_Playback(fps);
+#if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
+        size_t const fnlen = strlen(filename);
+        bool const is_ts = fnlen >= 3 && strcasecmp(filename + fnlen - 3, ".ts") == 0;
+
+        // G1/G2 must not derive playback timing from the fixed 1080p50 OSD
+        // overlay path. For TS race recordings, Display_Playback switches the
+        // actual live FPV video path to match the stream. Keep MP4 and invalid
+        // 90fps/1080p combinations on stock timing because both have known
+        // black-screen failure modes.
+        if (is_ts && fps >= 85 && playCtx->dmx->height <= 720) {
+            playCtx->retimedHz = Display_Playback(fps);
+            if (playCtx->retimedHz == 90) {
+                voWidth = 1280;
+                voHeight = 720;
+            }
+        } else if (is_ts && fps >= 55 && fps < 85) {
+            playCtx->retimedHz = Display_Playback(fps);
+        }
+#else
+        // Preserve upstream's BoxPro-tested UI/SoC playback timing path.
+        playCtx->retimedHz = Display_Playback(fps);
+#endif
 #endif
 
         vvParams.initRotation = 0;
@@ -300,7 +320,7 @@ failed:
     vdec2vo_deinitSys(playCtx->vv);
     awdmx_close(playCtx->dmx);
 #if PLAY_HDZERO
-    if (playCtx->retimed)
+    if (playCtx->retimedHz)
         Display_UI(); // restore the default UI panel refresh
 #endif
     pthread_mutex_destroy(&playCtx->mutex);
@@ -308,6 +328,12 @@ failed:
     LOGD("exit done");
 
     return NULL;
+}
+
+int media_retimed_hz(media_t *media) {
+    if (!media)
+        return 0;
+    return ((PlayContext_t *)media->context)->retimedHz;
 }
 
 void media_exit(media_t *media) {
@@ -321,7 +347,7 @@ void media_exit(media_t *media) {
     vdec2vo_deinitSys(playCtx->vv);
     awdmx_close(playCtx->dmx);
 #if PLAY_HDZERO
-    if (playCtx->retimed)
+    if (playCtx->retimedHz)
         Display_UI(); // restore the default UI panel refresh
 #endif
     pthread_mutex_destroy(&playCtx->mutex);

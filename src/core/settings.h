@@ -158,6 +158,7 @@ typedef struct {
 
 typedef struct {
     bool enable;
+    bool vtx_send_enable;
 } setting_elrs_t;
 
 typedef enum {

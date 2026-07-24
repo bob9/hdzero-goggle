@@ -597,13 +597,29 @@ void Display_UI() {
     pthread_mutex_unlock(&hardware_mutex);
 }
 
-bool Display_Playback(int fps) {
-    // Panel retiming for playback is not wired on this target: the M-FPGA's UI
-    // passthrough only supports the boot 1080p50 vdpo timing, so a plain vdpo
-    // switch blanks/garbles the panel. Keep stock behavior (BoxPro carries the
-    // working implementation).
-    (void)fps;
-    return false;
+void Display_720P90_t(int mode);
+void Display_1080P30_t(int mode);
+
+int Display_Playback(int fps) {
+    int const hz = fps >= 85 ? 90 : fps >= 55 ? 60 : 0;
+    if (!hz)
+        return 0;
+
+    // The OSD/UI passthrough on G1 is fixed at 1080p50. Reuse the actual live
+    // FPV camera path instead: decoded DVR video rides the VDPO overlay plane
+    // while the M-FPGA runs the proven live 720p90/1080p60 timing.
+    pthread_mutex_lock(&hardware_mutex);
+    screen.display(0);
+    Display_UI_init();
+    if (hz == 90)
+        Display_720P90_t(VR_540P90);
+    else
+        Display_1080P30_t(VR_1080P30);
+    screen.display(1);
+    pthread_mutex_unlock(&hardware_mutex);
+
+    LOGI("Display_Playback: live FPV path at %dHz", hz);
+    return hz;
 }
 
 void Display_720P60_50_t(int mode, uint8_t is_43) // fps: 0=50, 1=60

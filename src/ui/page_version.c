@@ -42,9 +42,6 @@ enum {
     ROW_GOGGLE_COUNT
 };
 
-#define APP_VERSION_DISPLAY_PREFIX "ripples-"
-#define APP_VERSION_IDENTITY_SUFFIX "-ripples"
-
 enum {
     ROW_BOXPRO_UPDATE_VTX = -1,
     ROW_BOXPRO_CUR_VERSION = 0,
@@ -391,34 +388,16 @@ int generate_current_version(sys_version_t *sys_ver) {
     while (*numeric_version && !isdigit((unsigned char)*numeric_version)) {
         numeric_version++;
     }
-    int version_fields = sscanf(numeric_version, "%hhu.%hhu.%hhu",
-                                &sys_ver->app_major,
-                                &sys_ver->app_minor,
-                                &sys_ver->app_patch);
-    char display_app_version[32] = {0};
-    if (version_fields == 3) {
-        const char *identity_suffix = strstr(numeric_version, APP_VERSION_IDENTITY_SUFFIX);
-        if (identity_suffix) {
-            snprintf(display_app_version, sizeof(display_app_version), "%s%.*s%s",
-                     APP_VERSION_DISPLAY_PREFIX,
-                     (int)(identity_suffix - numeric_version),
-                     numeric_version,
-                     identity_suffix + strlen(APP_VERSION_IDENTITY_SUFFIX));
-        } else {
-            snprintf(display_app_version, sizeof(display_app_version), "%s%s",
-                     APP_VERSION_DISPLAY_PREFIX,
-                     numeric_version);
-        }
-    } else {
-        snprintf(display_app_version, sizeof(display_app_version), "%s", app_version);
-    }
-
+    sscanf(numeric_version, "%hhu.%hhu.%hhu",
+           &sys_ver->app_major,
+           &sys_ver->app_minor,
+           &sys_ver->app_patch);
     LOGI("app: %s rx0: %u rx1: %u va: %u",
-         display_app_version,
+         app_version,
          sys_ver->rx0, sys_ver->rx1, sys_ver->va);
 
     snprintf(sys_ver->current, CURRENT_VER_MAX, "app: %s rx0: %u rx1: %u va: %u",
-             display_app_version,
+             app_version,
              sys_ver->rx0, sys_ver->rx1, sys_ver->va);
 
     return 0;

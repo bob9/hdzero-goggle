@@ -7,6 +7,7 @@
 #include "core/app_state.h"
 #include "core/common.hh"
 #include "core/dvr.h"
+#include "core/elrs.h"
 #include "core/ht.h"
 #include "core/input_device.h"
 #include "core/osd.h"
@@ -64,6 +65,7 @@ static const action_t btnActions[] = {
     {.id = 7, .name = "Star DVR", .functionPtr = &dvr_star},
     {.id = 8, .name = "Toggle source", .functionPtr = &source_toggle},
     {.id = 9, .name = "Cycle source", .functionPtr = &source_cycle},
+    {.id = 11, .name = "Send VTX", .functionPtr = &elrs_send_vtx},
 };
 
 static const action_t rollerActions[] = {

@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -843,6 +844,15 @@ static void get_event(int fd) {
 
     read(fd, &event, sizeof(event));
 
+    // Fallback for kernels without EVIOCSCLOCKID: resetting the RTC backwards
+    // must not leave the scroll debounce timestamps in the future.
+    static struct timeval last_event_time = {0, 0};
+    if (timercmp(&event.time, &last_event_time, <)) {
+        next_scroll = event.time;
+        next_rel = event.time;
+    }
+    last_event_time = event.time;
+
     switch (event.type) {
     case EV_SYN:
         if (event.code == SYN_REPORT) {
@@ -1080,6 +1090,12 @@ void input_device_init() {
 
         int fd = open(buf, O_RDONLY);
         if (fd >= 0) {
+            // Use monotonic event timestamps so Set Clock / MSP_SET_RTC cannot
+            // deaden the dial by moving the wall clock behind its debounce gate.
+            int clkid = CLOCK_MONOTONIC;
+            if (ioctl(fd, EVIOCSCLOCKID, &clkid) != 0) {
+                LOGI("EVIOCSCLOCKID unsupported on %s", buf);
+            }
             add_to_epfd(epfd, fd);
             LOGI("opened %s", buf);
         }

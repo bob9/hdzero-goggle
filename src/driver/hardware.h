@@ -95,10 +95,11 @@ void Source_AV_retime(void);
 void Display_UI_init();
 void Display_UI();
 
-// Set the panel refresh during DVR playback to match the clip's frame rate
-// (keeps the UI/SoC source path). Returns true if the panel mode was changed
-// (caller restores with Display_UI() on exit), false if already optimal.
-bool Display_Playback(int fps);
+// Set the panel refresh during DVR playback to match the clip's frame rate.
+// Goggle/Goggle2 use the live FPV video path because their UI/OSD passthrough
+// is fixed at 1080p50; BoxPro keeps its working UI/SoC playback path.
+// Returns the applied refresh (for example 60 or 90), or 0 when unchanged.
+int Display_Playback(int fps);
 
 void Display_720P90(int mode);
 void Display_720P60_50(int mode, uint8_t is_43);

@@ -606,7 +606,7 @@ void Display_UI() {
     pthread_mutex_unlock(&hardware_mutex);
 }
 
-bool Display_Playback(int fps) {
+int Display_Playback(int fps) {
     // Pick a panel refresh that matches the clip so playback isn't judder-capped
     // by the 720p60 UI mode. Keeps the UI/SoC source path (Display_VO_SWITCH(0)).
     vdpo_tmg_t target;
@@ -622,7 +622,7 @@ bool Display_Playback(int fps) {
     pthread_mutex_lock(&hardware_mutex);
     if (g_hw_stat.vdpo_tmg == target) {
         pthread_mutex_unlock(&hardware_mutex);
-        return false; // already optimal, nothing to do
+        return 0; // already optimal, nothing to do
     }
 
     g_hw_stat.source_mode = SOURCE_MODE_UI;
@@ -661,7 +661,13 @@ bool Display_Playback(int fps) {
     screen.display(1);
     system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
     pthread_mutex_unlock(&hardware_mutex);
-    return true;
+    if (target == VDPO_TMG_720P100)
+        return 100;
+    if (target == VDPO_TMG_720P90)
+        return 90;
+    if (target == VDPO_TMG_720P50)
+        return 50;
+    return 60;
 }
 
 void HDZero_open(int bw) {
