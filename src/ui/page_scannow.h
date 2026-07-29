@@ -7,10 +7,7 @@ extern "C" {
 #include "ui/ui_main_menu.h"
 #include <lvgl/lvgl.h>
 
-#define HDZERO_CHANNEL_NUM (g_setting.source.hdzero_band == RACE_BAND ? 12 : 8)
-// all-band scan/dial: 12 raceband-mode channels followed by L1-L8
-#define SCAN_ALL_CH_NUM    20
-#define SCAN_CHANNEL_NUM   (g_setting.source.dial_lowband ? SCAN_ALL_CH_NUM : HDZERO_CHANNEL_NUM)
+#define HDZERO_CHANNEL_NUM (g_setting.source.hdzero_band == SETTING_SOURCES_HDZERO_BAND_RACEBAND ? 12 : 8)
 #define ANALOG_CHANNEL_NUM 48
 
 typedef enum {
@@ -22,6 +19,10 @@ int scan(void);
 int scan_reinit(void);
 void autoscan_exit(void);
 void page_scannow_set_channel_label(void);
+// Preset the protocol the boot-time Auto Scan runs in (scan_mode_t value:
+// 0=HDZero, 1=Analog, 2=Dual). Out-of-range values for the target (the G1
+// only scans HDZero) are ignored. Does not touch the persisted picker default.
+void page_scannow_set_boot_scan_mode(int mode);
 
 extern page_pack_t pp_scannow;
 

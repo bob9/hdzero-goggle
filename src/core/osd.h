@@ -89,6 +89,18 @@ typedef struct {
 
 extern uint8_t channel_osd_mode;
 extern uint8_t channel_osd_sent;
+// Override for the channel preview namespace (only consulted when
+// channel_osd_mode has the 0x80 "preview" bit set). 0 = use current source;
+// 1 = force HDZ naming; 2 = force analog naming. Used by the BoxPro
+// auto-detect dial to show readable "To R5/ANA?" previews even when the
+// previewed entry's protocol differs from the active source.
+extern uint8_t channel_osd_preview_proto;
+// Override for the HDZ band used when formatting a channel preview (only
+// consulted when previewing an HDZ channel). 0xFF = use g_setting.source
+// .hdzero_band; 0 = force Raceband naming; 1 = force Lowband naming. Lets the
+// BoxPro dial preview the correct R*/L* name when walking across both bands
+// before the band is committed.
+extern uint8_t channel_osd_preview_band;
 
 int osd_init(void);
 int osd_clear(void);
@@ -99,11 +111,29 @@ void osd_rec_update(bool enable);
 void osd_show(bool show);
 void osd_update_element_positions();
 char *channel2str(uint8_t is_hdzero, uint8_t is_lowband, uint8_t channel);
+// Returns a channel label tagged with the protocol that produced it, e.g.
+// "R1·HDZ" or "F4·ANA". The `protocol` parameter takes scan_protocol_t
+// values (1 = PROTOCOL_HDZ, 2 = PROTOCOL_ANALOG); other values yield "----".
+// Declared as `int` (not `scan_protocol_t`) so osd.h does not need to include
+// scan_core.h.
+char *channel2str_tagged(int protocol, uint8_t channel_index);
+// Shows a red "Detecting..." tag on the channel OSD element while an
+// auto-detect probe or Auto-BW settle is in flight; dial channel selection is
+// disabled until osd_detecting_show(false). Caller must hold lvgl_mutex.
+void osd_detecting_show(bool on);
+// True while an auto-detect probe / Auto-BW settle is in flight.
+bool osd_is_detecting(void);
 void load_fc_osd_font(uint8_t);
 void *thread_osd(void *ptr);
 void osd_resource_path(char *buf, const char *fmt, osd_resource_t osd_resource_type, ...);
 void osd_toggle();
 void osd_analog_rssi_update_location();
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+// Editor preview only: while the OSD element position UI is open, selects
+// whether osd_show_all_elements() previews the analog-source elements (RSSI
+// bar) or the HDZero-only ones. Set by ui_osd_element_pos.
+extern bool osd_element_preview_analog;
+#endif
 #ifdef __cplusplus
 }
 #endif

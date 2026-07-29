@@ -3,6 +3,7 @@
 #include "adec2ao.h"
 #include "awdmx.h"
 #include "vdec2vo.h"
+#include "wav_test.h"
 
 typedef struct
 {
@@ -25,6 +26,8 @@ void media_control(media_t *media, player_cmd_t *cmd) {}
 media_t *media_instantiate(char *filename, notify_cb_t notify) { return NULL; }
 void media_exit(media_t *media) {}
 int media_retimed_hz(media_t *media) { return 0; }
+int wav_test_play(const char *path) { return -1; }
+int wav_test_record(const char *path, int seconds) { return -1; }
 
 #if HDZGOGGLE
 void Display_HDZ(int mode, int is_43) {}

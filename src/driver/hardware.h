@@ -66,7 +66,8 @@ typedef struct {
     int is_av_in;
     int av_pal[2];
     int av_pal_w;
-    int av_valid[2]; // 0=AV in; 1=RF Analog
+    int av_valid[2];   // 0=AV in; 1=RF Analog
+    int av_reinit_req; // G1 auto NTSC/PAL: full re-entry requested (see thread_peripheral)
 
     // hdmi in
     int hdmiin_valid;
@@ -87,6 +88,10 @@ void HDZero_Close();
 
 void Source_HDMI_in();
 void Source_AV(bool is_av_in);
+#if defined(HDZGOGGLE)
+// Light analog NTSC<->PAL re-time for the G1 Auto switch (see hardware-goggle.c).
+void Source_AV_retime(void);
+#endif
 void Display_UI_init();
 void Display_UI();
 

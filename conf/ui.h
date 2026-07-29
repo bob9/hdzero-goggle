@@ -66,7 +66,7 @@ extern "C" {
 #define UI_SCANNOW_PAGE_PAD               60
 #define UI_SCANNOW_SCANNER_SIZE           1053, 250
 #define UI_SCANNOW_PROG_BAR_SIZE          500, 50
-#define UI_SCANNOW_FREQ_SIZE              1164, 500
+#define UI_SCANNOW_FREQ_SIZE              1053, 500
 #define UI_CLOCK_COLS                     160, 160, 160, 160, 160, 160, LV_GRID_TEMPLATE_LAST
 #define UI_CLOCK_ROWS                     60, 60, 60, 60, 60, 15, 10, 60, 60, 60, LV_GRID_TEMPLATE_LAST
 #define UI_CLOCK_DATE_PAD                 8
@@ -88,11 +88,19 @@ extern "C" {
 #define UI_OSD_TEXT_FONT                  &lv_font_montserrat_20
 #define UI_PLAYBACK_COLS                  320, 320, 320, LV_GRID_TEMPLATE_LAST
 #define UI_PLAYBACK_ROWS                  150, 30, 150, 30, 150, 30, 30, LV_GRID_TEMPLATE_LAST
-#define UI_POWER_COLS                     160, 200, 160, 160, 120, 160, LV_GRID_TEMPLATE_LAST
+#define UI_POWER_COLS                     160, 160, 160, 160, 120, 210, LV_GRID_TEMPLATE_LAST
 #define UI_POWER_ROWS                     60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST
 #define UI_RECORD_COLS                    160, 200, 200, 160, 120, 120, LV_GRID_TEMPLATE_LAST
 #define UI_RECORD_ROWS                    60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST
-#define UI_SOURCE_COLS                    160, 160, 200, 160, 160, 160, LV_GRID_TEMPLATE_LAST
+#define UI_AUDIO_COLS                     160, 200, 200, 160, 120, 120, LV_GRID_TEMPLATE_LAST
+#define UI_AUDIO_ROWS                     50, 50, 50, 50, 50, 50, 50, 50, 50, 50, LV_GRID_TEMPLATE_LAST
+#define UI_AUDIO_TEST_BUTTON_WIDTH        122
+#define UI_AUDIO_TEST_BUTTON_HEIGHT       40
+#define UI_AUDIO_TEST_BUTTON_GAP          12
+// Idle test-button grey. Kept distinct from UI_STYLE_SELECT_BG_COLOR
+// (0x646464 here) so the boxes stay visible when the Run Test row is selected.
+#define UI_AUDIO_TEST_BTN_BG              0x404040
+#define UI_SOURCE_COLS                    160, 160, 160, 160, 160, 160, LV_GRID_TEMPLATE_LAST
 #define UI_SOURCE_ROWS                    60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, LV_GRID_TEMPLATE_LAST
 #define UI_STORAGE_COLS                   160, 160, 160, 160, 160, 160, LV_GRID_TEMPLATE_LAST
 #define UI_STORAGE_ROWS                   60, 60, 60, 60, 60, 60, 60, 40, LV_GRID_TEMPLATE_LAST
@@ -231,15 +239,25 @@ static inline int UI_STATUS_BAR_LABEL_WIDTH() {
 #define UI_OSD_TEXT_FONT                  &lv_font_montserrat_14
 #define UI_PLAYBACK_COLS                  210, 210, 210, LV_GRID_TEMPLATE_LAST
 #define UI_PLAYBACK_ROWS                  100, 20, 100, 20, 100, 20, 20, LV_GRID_TEMPLATE_LAST
-#define UI_POWER_COLS                     106, 132, 106, 106, 80, 106, LV_GRID_TEMPLATE_LAST
+#define UI_POWER_COLS                     106, 132, 106, 106, 80, 170, LV_GRID_TEMPLATE_LAST
 #define UI_POWER_ROWS                     40, 40, 40, 40, 40, 40, 40, 40, 40, 40, LV_GRID_TEMPLATE_LAST
 #define UI_RECORD_COLS                    106, 132, 132, 106, 80, 80, LV_GRID_TEMPLATE_LAST
 #define UI_RECORD_ROWS                    40, 40, 40, 40, 40, 40, 40, 40, 40, 40, LV_GRID_TEMPLATE_LAST
-#define UI_SOURCE_COLS                    106, 106, 130, 106, 106, 106, LV_GRID_TEMPLATE_LAST
-#define UI_SOURCE_ROWS                    40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, LV_GRID_TEMPLATE_LAST
+#define UI_AUDIO_COLS                     106, 132, 132, 106, 80, 80, LV_GRID_TEMPLATE_LAST
+#define UI_AUDIO_ROWS                     36, 36, 36, 36, 36, 36, 36, 36, 36, 36, LV_GRID_TEMPLATE_LAST
+#define UI_AUDIO_TEST_BUTTON_WIDTH        84
+#define UI_AUDIO_TEST_BUTTON_HEIGHT       28
+#define UI_AUDIO_TEST_BUTTON_GAP          8
+// Idle test-button grey. BoxPro's row highlight is 0x404040, so the boxes use
+// a lighter grey here to stay visible (read as raised) when Run Test is selected.
+#define UI_AUDIO_TEST_BTN_BG              0x646464
+#define UI_SOURCE_COLS                    106, 106, 106, 106, 106, 106, LV_GRID_TEMPLATE_LAST
+#define UI_SOURCE_ROWS                    40, 40, 40, 40, 40, 40, 40, 40, 40, 40, LV_GRID_TEMPLATE_LAST
 #define UI_STORAGE_COLS                   106, 106, 106, 106, 106, 106, LV_GRID_TEMPLATE_LAST
 #define UI_STORAGE_ROWS                   40, 40, 40, 40, 40, 40, 40, 26, LV_GRID_TEMPLATE_LAST
-#define UI_VERSION_COLS                   106, 106, 106, 106, 106, 106, LV_GRID_TEMPLATE_LAST
+// col 1+ widened so the full version string ("app: ... rx0: .. rx1: .. va: ...",
+// 630px at the normal text font) stays inside the stretched selection bar
+#define UI_VERSION_COLS                   106, 130, 130, 130, 130, 130, LV_GRID_TEMPLATE_LAST
 #define UI_VERSION_ROWS                   40, 40, 40, 40, 40, 40, 40, 26, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_COLS               106, 106, 106, 106, 106, 106, LV_GRID_TEMPLATE_LAST
 #define UI_ANALOG_RSSI_ROWS               40, 40, 40, 40, 40, 40, 40, 26, LV_GRID_TEMPLATE_LAST

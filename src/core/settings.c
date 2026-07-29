@@ -20,6 +20,14 @@
 
 setting_t g_setting;
 
+uint8_t g_hdz_detected_bw = SETTING_SOURCES_HDZERO_BW_WIDE;
+
+uint8_t hdzero_effective_bw(void) {
+    if (g_setting.source.hdzero_bw == SETTING_SOURCES_HDZERO_BW_BOTH)
+        return g_hdz_detected_bw;
+    return (uint8_t)g_setting.source.hdzero_bw;
+}
+
 const setting_t g_setting_defaults = {
     .scan = {
         .channel = 1,
@@ -34,15 +42,17 @@ const setting_t g_setting_defaults = {
         .status = SETTING_AUTOSCAN_STATUS_ON,
         .last_source = SETTING_AUTOSCAN_SOURCE_LAST,
         .source = SETTING_AUTOSCAN_SOURCE_HDZERO,
+        .load_from_boot = false,
     },
     .power = {
         .voltage = 3500,
+        .warning_voltage_gradual = 3700,
         .display_voltage = true,
         .warning_type = SETTING_POWER_WARNING_TYPE_BOTH,
         .cell_count_mode = SETTING_POWER_CELL_COUNT_MODE_AUTO,
         .cell_count = 2,
         .osd_display_mode = SETTING_POWER_OSD_DISPLAY_MODE_TOTAL,
-        .power_ana = false,
+        .power_ana = true, // AnalogRX Power: true = "Auto" (power the analog module only while it is the active source); false = "On" (always powered)
         .calibration_offset = 0,
     },
     .record = {
@@ -52,20 +62,40 @@ const setting_t g_setting_defaults = {
         .osd = true,
         .audio = true,
         .audio_source = SETTING_RECORD_AUDIO_SOURCE_MIC,
+        .dvr_audio_volume = 8,
+        .live_audio_volume = 10,
+        .mic_gain = 4,
+        .linein_gain = 3,
         .naming = SETTING_NAMING_CONTIGUOUS,
+        .stop_delay_seconds = 0,
     },
     .image = {
 #if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
         .oled = 8,
-        .saturation = 28,
-        .contrast = 25,
 #elif defined(HDZBOXPRO)
         .oled = 12,
-        .saturation = 47,
-        .contrast = 30,
 #endif
-        .brightness = 39,
         .auto_off = 1,
+        .analog = {
+            .brightness = 39,
+#if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
+            .saturation = 28,
+            .contrast = 25,
+#elif defined(HDZBOXPRO)
+            .saturation = 47,
+            .contrast = 30,
+#endif
+        },
+        .hdzero = {
+            .brightness = 39,
+#if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
+            .saturation = 28,
+            .contrast = 25,
+#elif defined(HDZBOXPRO)
+            .saturation = 47,
+            .contrast = 30,
+#endif
+        },
     },
     .ht = {
         .enable = false,
@@ -86,6 +116,7 @@ const setting_t g_setting_defaults = {
     .elrs = {
         .enable = false,
         .vtx_send_enable = true,
+        .auto_send_vtx = false,
     },
     .ease = {
         .no_dial = 0,
@@ -171,6 +202,11 @@ const setting_t g_setting_defaults = {
                 .show = true,
                 .position = {.mode_4_3 = {.x = 1000, .y = 0}, .mode_16_9 = {.x = 1160, .y = 0}},
             },
+            // OSD_GOGGLE_ANALOG_RSSI
+            {
+                .show = true,
+                .position = {.mode_4_3 = {.x = 960, .y = 14}, .mode_16_9 = {.x = 1120, .y = 14}},
+            },
             // OSD_GOGGLE_TEMP_TOP
             {
                 .show = true,
@@ -232,10 +268,13 @@ const setting_t g_setting_defaults = {
     .source = {
         .analog_channel = 33, // R1
         .analog_format = SETTING_SOURCES_ANALOG_FORMAT_NTSC,
+        .analog_auto = true,
         .analog_ratio = SETTING_SOURCES_ANALOG_RATIO_4_3,
         .hdzero_band = SETTING_SOURCES_HDZERO_BAND_RACEBAND,
         .hdzero_bw = SETTING_SOURCES_HDZERO_BW_WIDE,
-        .dial_lowband = false,
+        .auto_protocol_detect = false,
+        .analog_scan_band = 4, // R band
+        .scan_mode_initial = 2, // Auto/Both
     },
     .language = {
         .lang = LANG_ENGLISH_DEFAULT,
@@ -246,6 +285,26 @@ const setting_t g_setting_defaults = {
     },
     .has_all_features = true,
 };
+
+setting_image_video_t *settings_image_video(setting_image_source_t source) {
+    switch (source) {
+    case SETTING_IMAGE_SOURCE_ANALOG:
+        return &g_setting.image.analog;
+    case SETTING_IMAGE_SOURCE_HDZERO:
+    default:
+        return &g_setting.image.hdzero;
+    }
+}
+
+const setting_image_video_t *settings_image_video_defaults(setting_image_source_t source) {
+    switch (source) {
+    case SETTING_IMAGE_SOURCE_ANALOG:
+        return &g_setting_defaults.image.analog;
+    case SETTING_IMAGE_SOURCE_HDZERO:
+    default:
+        return &g_setting_defaults.image.hdzero;
+    }
+}
 
 int settings_put_osd_element_shown(bool show, char *config_name) {
     char setting_key[128];
@@ -344,7 +403,37 @@ void settings_init(void) {
         settings_reset();
 }
 
+static int settings_migrate_dvr_audio_volume(int volume) {
+    if (volume > 10)
+        volume = volume - 25;
+
+    if (volume < 0)
+        return 0;
+
+    switch (volume) {
+    case 0:
+        return 0;
+    case 1:
+        return 1;
+    case 2:
+        return 1;
+    case 3:
+        return 2;
+    case 4:
+        return 3;
+    case 5:
+        return 5;
+    case 6:
+        return 8;
+    default:
+        return volume > 8 ? 8 : volume;
+    }
+}
+
 void settings_load(void) {
+    int audio_volume;
+    int dvr_audio_volume;
+
     // Start with a fully configured structure then update!
     memcpy(&g_setting, &g_setting_defaults, sizeof(g_setting));
 
@@ -359,11 +448,20 @@ void settings_load(void) {
 
     // source
     g_setting.source.analog_format = ini_getl("source", "analog_format", g_setting_defaults.source.analog_format, SETTING_INI);
+    g_setting.source.analog_auto = ini_getl("source", "analog_auto", g_setting_defaults.source.analog_auto, SETTING_INI);
     g_setting.source.analog_ratio = ini_getl("source", "analog_ratio", g_setting_defaults.source.analog_ratio, SETTING_INI);
     g_setting.source.hdzero_band = ini_getl("source", "hdzero_band", g_setting_defaults.source.hdzero_band, SETTING_INI);
     g_setting.source.hdzero_bw = ini_getl("source", "hdzero_bw", g_setting_defaults.source.hdzero_bw, SETTING_INI);
-    g_setting.source.dial_lowband = settings_get_bool("source", "dial_lowband", g_setting_defaults.source.dial_lowband);
     g_setting.source.analog_channel = ini_getl("source", "analog_channel", g_setting_defaults.source.analog_channel, SETTING_INI);
+    g_setting.source.auto_protocol_detect = settings_get_bool("source", "auto_protocol_detect", g_setting_defaults.source.auto_protocol_detect);
+    g_setting.source.analog_scan_band = ini_getl("source", "analog_scan_band", g_setting_defaults.source.analog_scan_band, SETTING_INI);
+    if (g_setting.source.analog_scan_band > 5) {
+        g_setting.source.analog_scan_band = g_setting_defaults.source.analog_scan_band;
+    }
+    g_setting.source.scan_mode_initial = ini_getl("source", "scan_mode_initial", g_setting_defaults.source.scan_mode_initial, SETTING_INI);
+    if (g_setting.source.scan_mode_initial > 2) {
+        g_setting.source.scan_mode_initial = g_setting_defaults.source.scan_mode_initial;
+    }
     if (g_setting.scan.channel > HDZERO_CHANNEL_NUM) {
         g_setting.scan.channel = 1;
     }
@@ -375,6 +473,15 @@ void settings_load(void) {
     g_setting.autoscan.status = ini_getl("autoscan", "status", g_setting_defaults.autoscan.status, SETTING_INI);
     g_setting.autoscan.source = ini_getl("autoscan", "source", g_setting_defaults.autoscan.source, SETTING_INI);
     g_setting.autoscan.last_source = ini_getl("autoscan", "last_source", g_setting_defaults.autoscan.last_source, SETTING_INI);
+    g_setting.autoscan.load_from_boot = settings_get_bool("autoscan", "load_from_boot", g_setting_defaults.autoscan.load_from_boot);
+#if defined(HDZGOGGLE)
+    // No Auto Detect on the G1 (external analog module only); fall back to
+    // HDZero if a setting.ini written by a BoxPro/G2 selected it.
+    if (g_setting.autoscan.source == SETTING_AUTOSCAN_SOURCE_AUTO_DETECT)
+        g_setting.autoscan.source = SETTING_AUTOSCAN_SOURCE_HDZERO;
+    if (g_setting.autoscan.last_source == SETTING_AUTOSCAN_SOURCE_AUTO_DETECT)
+        g_setting.autoscan.last_source = SETTING_AUTOSCAN_SOURCE_HDZERO;
+#endif
 
     // osd
     g_setting.osd.orbit = ini_getl("osd", "orbit", g_setting_defaults.osd.orbit, SETTING_INI);
@@ -414,9 +521,11 @@ void settings_load(void) {
     settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_TEMP_TOP], "goggle_temp_top", &g_setting_defaults.osd.element[OSD_GOGGLE_TEMP_TOP]);
     settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_TEMP_LEFT], "goggle_temp_left", &g_setting_defaults.osd.element[OSD_GOGGLE_TEMP_LEFT]);
     settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_TEMP_RIGHT], "goggle_temp_right", &g_setting_defaults.osd.element[OSD_GOGGLE_TEMP_RIGHT]);
+    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_ANALOG_RSSI], "analog_rssi_bar", &g_setting_defaults.osd.element[OSD_GOGGLE_ANALOG_RSSI]);
 
     // power
     g_setting.power.voltage = ini_getl("power", "voltage_mv", g_setting_defaults.power.voltage, SETTING_INI);
+    g_setting.power.warning_voltage_gradual = ini_getl("power", "voltage_gradual_mv", g_setting_defaults.power.warning_voltage_gradual, SETTING_INI);
     g_setting.power.warning_type = ini_getl("power", "warning_type", g_setting_defaults.power.warning_type, SETTING_INI);
     g_setting.power.cell_count_mode = ini_getl("power", "cell_count_mode", g_setting_defaults.power.cell_count_mode, SETTING_INI);
     g_setting.power.cell_count = ini_getl("power", "cell_count", g_setting_defaults.power.cell_count, SETTING_INI);
@@ -431,15 +540,56 @@ void settings_load(void) {
     g_setting.record.osd = settings_get_bool("record", "osd", g_setting_defaults.record.osd);
     g_setting.record.audio = settings_get_bool("record", "audio", g_setting_defaults.record.audio);
     g_setting.record.audio_source = ini_getl("record", "audio_source", g_setting_defaults.record.audio_source, SETTING_INI);
+    audio_volume = ini_getl("record", "audio_volume", 31, SETTING_INI);
+    dvr_audio_volume = ini_getl("record", "dvr_audio_volume_v2", -1, SETTING_INI);
+    if (dvr_audio_volume < 0)
+        dvr_audio_volume = settings_migrate_dvr_audio_volume(ini_getl("record", "dvr_audio_volume", audio_volume, SETTING_INI));
+    g_setting.record.dvr_audio_volume = dvr_audio_volume;
+    if (g_setting.record.dvr_audio_volume < 0)
+        g_setting.record.dvr_audio_volume = 0;
+    else if (g_setting.record.dvr_audio_volume > 8)
+        g_setting.record.dvr_audio_volume = 8;
+    g_setting.record.live_audio_volume = ini_getl("record", "live_audio_volume", audio_volume, SETTING_INI);
+    if (g_setting.record.live_audio_volume > 10)
+        g_setting.record.live_audio_volume = (g_setting.record.live_audio_volume - 25) * 10 / 6;
+    if (g_setting.record.live_audio_volume < 0)
+        g_setting.record.live_audio_volume = 0;
+    else if (g_setting.record.live_audio_volume > 10)
+        g_setting.record.live_audio_volume = 10;
+    g_setting.record.mic_gain = ini_getl("record", "mic_gain", g_setting_defaults.record.mic_gain, SETTING_INI);
+    if (g_setting.record.mic_gain < 0)
+        g_setting.record.mic_gain = 0;
+    else if (g_setting.record.mic_gain > 7)
+        g_setting.record.mic_gain = 7;
+    g_setting.record.linein_gain = ini_getl("record", "linein_gain", g_setting_defaults.record.linein_gain, SETTING_INI);
+    if (g_setting.record.linein_gain < 0)
+        g_setting.record.linein_gain = 0;
+    else if (g_setting.record.linein_gain > 7)
+        g_setting.record.linein_gain = 7;
     g_setting.record.naming = ini_getl("record", "naming", g_setting_defaults.record.naming, SETTING_INI);
+    if (g_setting.record.naming < SETTING_NAMING_CONTIGUOUS ||
+        g_setting.record.naming > SETTING_NAMING_ELRS) {
+        g_setting.record.naming = g_setting_defaults.record.naming;
+    }
+    g_setting.record.stop_delay_seconds = ini_getl("record", "stop_delay_seconds", g_setting_defaults.record.stop_delay_seconds, SETTING_INI);
+    if (g_setting.record.stop_delay_seconds > 30)
+        g_setting.record.stop_delay_seconds = 30;
 
     // image
     g_setting.image.oled = ini_getl("image", "oled", g_setting_defaults.image.oled, SETTING_INI);
-    g_setting.image.brightness = ini_getl("image", "brightness", g_setting_defaults.image.brightness, SETTING_INI);
-    g_setting.image.saturation = ini_getl("image", "saturation", g_setting_defaults.image.saturation, SETTING_INI);
-    g_setting.image.contrast = ini_getl("image", "contrast", g_setting_defaults.image.contrast, SETTING_INI);
     g_setting.image.auto_off = ini_getl("image", "auto_off", g_setting_defaults.image.auto_off, SETTING_INI);
 
+    // Keep the old image keys as the migration fallback for both source profiles.
+    int brightness = ini_getl("image", "brightness", g_setting_defaults.image.hdzero.brightness, SETTING_INI);
+    int saturation = ini_getl("image", "saturation", g_setting_defaults.image.hdzero.saturation, SETTING_INI);
+    int contrast = ini_getl("image", "contrast", g_setting_defaults.image.hdzero.contrast, SETTING_INI);
+
+    g_setting.image.analog.brightness = ini_getl("image", "analog_brightness", brightness, SETTING_INI);
+    g_setting.image.analog.saturation = ini_getl("image", "analog_saturation", saturation, SETTING_INI);
+    g_setting.image.analog.contrast = ini_getl("image", "analog_contrast", contrast, SETTING_INI);
+    g_setting.image.hdzero.brightness = ini_getl("image", "hdzero_brightness", brightness, SETTING_INI);
+    g_setting.image.hdzero.saturation = ini_getl("image", "hdzero_saturation", saturation, SETTING_INI);
+    g_setting.image.hdzero.contrast = ini_getl("image", "hdzero_contrast", contrast, SETTING_INI);
     // head tracker
     g_setting.ht.enable = settings_get_bool("ht", "enable", g_setting_defaults.ht.enable);
     g_setting.ht.max_angle = ini_getl("ht", "max_angle", g_setting_defaults.ht.max_angle, SETTING_INI);
@@ -449,12 +599,29 @@ void settings_load(void) {
     g_setting.ht.gyr_x = ini_getl("ht", "gyr_x", g_setting_defaults.ht.gyr_x, SETTING_INI);
     g_setting.ht.gyr_y = ini_getl("ht", "gyr_y", g_setting_defaults.ht.gyr_y, SETTING_INI);
     g_setting.ht.gyr_z = ini_getl("ht", "gyr_z", g_setting_defaults.ht.gyr_z, SETTING_INI);
+
+    // One-time gyro calibration migration. The gyro range was tightened from
+    // 2000 to 1000 dps, which doubles LSB-per-(deg/s), so offsets captured at the
+    // old range must double or they under-subtract. gyr_cal_range_idx is the BMI270
+    // range index the offsets were calibrated at (0 = 2000 dps, 1 = 1000 dps).
+    // Idempotent and keyed on its own flag so it never triggers settings_reset().
+    if (ini_getl("ht", "gyr_cal_range_idx", 0, SETTING_INI) == 0) {
+        g_setting.ht.gyr_x *= 2;
+        g_setting.ht.gyr_y *= 2;
+        g_setting.ht.gyr_z *= 2;
+        ini_putl("ht", "gyr_x", g_setting.ht.gyr_x, SETTING_INI);
+        ini_putl("ht", "gyr_y", g_setting.ht.gyr_y, SETTING_INI);
+        ini_putl("ht", "gyr_z", g_setting.ht.gyr_z, SETTING_INI);
+        ini_putl("ht", "gyr_cal_range_idx", 1, SETTING_INI);
+    }
+
     g_setting.ht.alarm_state = ini_getl("ht", "alarm_state", g_setting_defaults.ht.alarm_state, SETTING_INI);
     g_setting.ht.alarm_angle = ini_getl("ht", "alarm_angle", g_setting_defaults.ht.alarm_angle, SETTING_INI);
 
     // elrs
     g_setting.elrs.enable = settings_get_bool("elrs", "enable", g_setting_defaults.elrs.enable);
     g_setting.elrs.vtx_send_enable = settings_get_bool("elrs", "vtx_send_enable", g_setting_defaults.elrs.vtx_send_enable);
+    g_setting.elrs.auto_send_vtx = settings_get_bool("elrs", "auto_send_vtx", g_setting_defaults.elrs.auto_send_vtx);
 
     // clock
     g_setting.clock.year = ini_getl("clock", "year", g_setting_defaults.clock.year, SETTING_INI);
@@ -523,6 +690,19 @@ void settings_load(void) {
     // analog rssi
     g_setting.analog_rssi.calib_min = ini_getl("analog_rssi", "calib_min", g_setting_defaults.analog_rssi.calib_min, SETTING_INI);
     g_setting.analog_rssi.calib_max = ini_getl("analog_rssi", "calib_max", g_setting_defaults.analog_rssi.calib_max, SETTING_INI);
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+    if (g_setting.analog_rssi.calib_max <= g_setting.analog_rssi.calib_min) {
+        uint16_t old_min = g_setting.analog_rssi.calib_min;
+        uint16_t old_max = g_setting.analog_rssi.calib_max;
+        g_setting.analog_rssi.calib_min = g_setting_defaults.analog_rssi.calib_min;
+        g_setting.analog_rssi.calib_max = g_setting_defaults.analog_rssi.calib_max;
+        ini_putl("analog_rssi", "calib_min", g_setting.analog_rssi.calib_min, SETTING_INI);
+        ini_putl("analog_rssi", "calib_max", g_setting.analog_rssi.calib_max, SETTING_INI);
+        LOGW("restored invalid analog_rssi calibration %u-%u to %u-%u mV",
+             old_min, old_max, g_setting.analog_rssi.calib_min,
+             g_setting.analog_rssi.calib_max);
+    }
+#endif
 
     // language
     if (!language_config()) {

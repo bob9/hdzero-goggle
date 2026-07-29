@@ -10,6 +10,7 @@
 #include "core/input_device.h"
 #include "core/msp_displayport.h"
 #include "core/osd.h"
+#include "core/scan_core.h"
 #include "driver/dm5680.h"
 #include "driver/dm6302.h"
 #include "driver/hardware.h"
@@ -52,6 +53,7 @@ void app_switch_to_menu() {
 #endif
 
     Display_UI();
+    image_settings_apply(SETTING_IMAGE_SOURCE_HDZERO);
     lvgl_switch_to_1080p();
     exit_tune_channel();
     osd_show(false);
@@ -63,6 +65,9 @@ void app_switch_to_menu() {
         IT66121_init();
 
     rtc6715.init(0, 0);
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+    scan_core_notify_analog_powered_off();
+#endif
     system_script(REC_STOP_LIVE);
 }
 
@@ -78,6 +83,10 @@ void app_exit_menu() {
 }
 
 void app_switch_to_analog(bool is_av_in) {
+#ifdef HDZGOGGLE2
+    system_exec("aww 0x0300b084 0x0001555");
+#endif
+
     dvr_update_vi_conf(VR_720P50);
     osd_fhd(0);
     osd_show(true);
@@ -87,15 +96,50 @@ void app_switch_to_analog(bool is_av_in) {
     Display_Osd(g_setting.record.osd);
 
     Source_AV(is_av_in);
+    image_settings_apply(SETTING_IMAGE_SOURCE_ANALOG);
 
     if (is_av_in) {
         rtc6715.init(0, 0);
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+        scan_core_notify_analog_powered_off();
+#endif
     } else {
-        rtc6715.init(1, g_setting.record.audio_source == SETTING_RECORD_AUDIO_SOURCE_AV_IN);
-        rtc6715.set_ch(g_setting.source.analog_channel - 1);
+#if defined(HDZGOGGLE2)
+        // Analog "Module" source. The Built-in receiver (rtc6715) and the
+        // Expansion module share the bay's analog input, so only one may drive
+        // it. When the user picks Expansion, powering and tuning the internal
+        // receiver here drives that shared input and overrides the external
+        // module -- the cause of "External is ignored, always uses Built-in".
+        // Keep the internal receiver powered down; Analog_Module_Power() keeps
+        // the expansion module powered while it is the active source.
+        //
+        // Dual (auto_protocol_detect) always uses the Built-in receiver -- it
+        // probes and tunes the internal rtc6715 and cannot use the Expansion
+        // module -- so it falls through to the Built-in branch regardless of
+        // the Analog Module setting.
+        if (g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_EXTERNAL &&
+            !g_setting.source.auto_protocol_detect) {
+            rtc6715.init(0, 0);
+            scan_core_notify_analog_powered_off();
+        } else
+#endif
+        {
+            rtc6715.init(1, g_setting.record.audio_source == SETTING_RECORD_AUDIO_SOURCE_AV_IN);
+            rtc6715.set_ch(g_setting.source.analog_channel - 1);
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+            scan_core_notify_analog_powered_on();
+#endif
+        }
     }
 
     g_setting.autoscan.last_source = is_av_in ? SETTING_AUTOSCAN_SOURCE_AV_IN : SETTING_AUTOSCAN_SOURCE_AV_MODULE;
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+    // Reached via Auto Detect (entry probe or protocol crossover): record
+    // that, so Auto Scan "Last" re-enters Auto Detect instead of pinning the
+    // protocol it happened to land on this session.
+    if (!is_av_in && g_setting.source.auto_protocol_detect)
+        g_setting.autoscan.last_source = SETTING_AUTOSCAN_SOURCE_AUTO_DETECT;
+#endif
     ini_putl("autoscan", "last_source", g_setting.autoscan.last_source, SETTING_INI);
 
     // audio in&out
@@ -107,17 +151,13 @@ void app_switch_to_analog(bool is_av_in) {
 }
 
 void app_switch_to_hdmi_in() {
-#if defined HDZBOXPRO
-    // Restore image settings from av module
-    screen.brightness(g_setting.image.oled);
-    Set_Contrast(g_setting.image.contrast);
-#endif
-
 #if defined HDZGOGGLE2
     system_exec("aww 0x0300b084 0x0001555");
 #endif
-
-  rtc6715.init(0, 0);
+    rtc6715.init(0, 0);
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+    scan_core_notify_analog_powered_off();
+#endif
 
     Source_HDMI_in();
     IT66121_close();
@@ -153,40 +193,33 @@ void app_switch_to_hdmi_in() {
 void app_switch_to_hdzero(bool is_default) {
     int ch;
 
-#if defined HDZBOXPRO
-    // Restore image settings from av module
-    screen.brightness(g_setting.image.oled);
-    Set_Contrast(g_setting.image.contrast);
-#endif
-
 #if defined HDZGOGGLE2
     system_exec("aww 0x0300b084 0x0001555");
 #endif
 
     rtc6715.init(0, 0);
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+    scan_core_notify_analog_powered_off();
+#endif
 
     if (is_default) {
         ch = g_setting.scan.channel - 1;
     } else {
         ch = valid_channel_tb[user_select_index];
-        if (g_setting.source.dial_lowband) {
-            // all-band scan index: 0-11 raceband, 12-19 lowband
-            uint8_t band = (ch >= BASE_CH_NUM) ? 1 : 0;
-            if (ch >= BASE_CH_NUM)
-                ch -= BASE_CH_NUM;
-            if (band != g_setting.source.hdzero_band) {
-                g_setting.source.hdzero_band = band;
-                ini_putl("source", "hdzero_band", g_setting.source.hdzero_band, SETTING_INI);
-            }
-        }
         g_setting.scan.channel = ch + 1;
         ini_putl("scan", "channel", g_setting.scan.channel, SETTING_INI);
     }
 
-    HDZero_open(g_setting.source.hdzero_bw);
+    // With BW=Auto, tag the channel OSD "Detecting..." for the switch sequence
+    // -- the bandwidth is still settling (the bw-reacquire watchdog corrects a
+    // wrong guess after entry).
+    if (g_setting.source.hdzero_bw == SETTING_SOURCES_HDZERO_BW_BOTH)
+        osd_detecting_show(true);
+
+    HDZero_open(hdzero_effective_bw());
     ch &= 0x7f;
 
-    LOGI("switch to bw:%d, band:%d, ch:%d, CAM_MODE=%d 4:3=%d", g_setting.source.hdzero_bw, g_setting.source.hdzero_band, g_setting.scan.channel, CAM_MODE, cam_4_3);
+    LOGI("switch to bw:%d, band:%d, ch:%d, CAM_MODE=%d 4:3=%d", hdzero_effective_bw(), g_setting.source.hdzero_band, g_setting.scan.channel, CAM_MODE, cam_4_3);
     DM6302_SetChannel(g_setting.source.hdzero_band, ch);
     DM5680_clear_vldflg();
     DM5680_req_vldflg();
@@ -230,16 +263,24 @@ void app_switch_to_hdzero(bool is_default) {
     LOGI("lvgl_switch_to_720p");
 #endif
 
+    image_settings_apply(SETTING_IMAGE_SOURCE_HDZERO);
     osd_clear();
     osd_show(true);
     lv_timer_handler();
     Display_Osd(g_setting.record.osd);
 
     g_setting.autoscan.last_source = SETTING_AUTOSCAN_SOURCE_HDZERO;
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+    // Reached via Auto Detect: record that (see app_switch_to_analog).
+    if (g_setting.source.auto_protocol_detect)
+        g_setting.autoscan.last_source = SETTING_AUTOSCAN_SOURCE_AUTO_DETECT;
+#endif
     ini_putl("autoscan", "last_source", g_setting.autoscan.last_source, SETTING_INI);
 
     dvr_update_vi_conf(CAM_MODE);
     system_script(REC_STOP_LIVE);
+
+    osd_detecting_show(false); // restore the normal channel tag
 }
 
 void hdzero_switch_channel(int channel) {

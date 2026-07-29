@@ -30,13 +30,21 @@ typedef enum {
     SETTING_AUTOSCAN_SOURCE_HDZERO = 1,
     SETTING_AUTOSCAN_SOURCE_AV_MODULE = 2,
     SETTING_AUTOSCAN_SOURCE_AV_IN = 3,
-    SETTING_AUTOSCAN_SOURCE_HDMI_IN = 4
+    SETTING_AUTOSCAN_SOURCE_HDMI_IN = 4,
+    // BoxPro/G2 only (built-in analog + Auto Detect); settings_load clamps it
+    // to HDZERO on the G1 in case a setting.ini moved between targets.
+    SETTING_AUTOSCAN_SOURCE_AUTO_DETECT = 5
 } setting_autoscan_source_t;
 
 typedef struct {
     setting_autoscan_status_t status;
     setting_autoscan_source_t last_source;
     setting_autoscan_source_t source;
+    // With Auto Scan=On: false = run a Scan Now sweep for the default
+    // source's protocol at boot (HDZero's historical behavior), true = enter
+    // the source directly. AV In and HDMI In always enter directly (nothing
+    // to scan); same for Analog on the G1 (external module, not scannable).
+    bool load_from_boot;
 } setting_autoscan_t;
 
 typedef enum {
@@ -52,7 +60,8 @@ typedef enum {
 typedef enum {
     SETTING_POWER_WARNING_TYPE_BEEP = 0,
     SETTING_POWER_WARNING_TYPE_VISUAL = 1,
-    SETTING_POWER_WARNING_TYPE_BOTH = 2
+    SETTING_POWER_WARNING_TYPE_BOTH = 2,
+    SETTING_POWER_WARNING_TYPE_GRADUAL = 3
 } setting_power_warning_type_t;
 
 typedef enum {
@@ -69,6 +78,7 @@ typedef enum {
 
 typedef struct {
     int voltage;
+    int warning_voltage_gradual; // top of gradual range, mV/cell
     bool display_voltage;
     setting_power_warning_type_t warning_type;
     setting_power_cell_count_mode_t cell_count_mode;
@@ -92,7 +102,8 @@ typedef enum {
 
 typedef enum {
     SETTING_NAMING_CONTIGUOUS,
-    SETTING_NAMING_DATE
+    SETTING_NAMING_DATE,
+    SETTING_NAMING_ELRS
 } setting_record_naming_t;
 
 typedef struct {
@@ -102,15 +113,30 @@ typedef struct {
     bool osd;
     bool audio;
     setting_record_audio_source_t audio_source;
+    int dvr_audio_volume;
+    int live_audio_volume;
+    int mic_gain;
+    int linein_gain;
     setting_record_naming_t naming;
+    uint8_t stop_delay_seconds; // auto record: grace period after signal loss before stopping (0 = off)
 } setting_record_t;
 
+typedef enum {
+    SETTING_IMAGE_SOURCE_ANALOG = 0,
+    SETTING_IMAGE_SOURCE_HDZERO,
+} setting_image_source_t;
+
 typedef struct {
-    uint8_t oled;
     uint8_t brightness;
     uint8_t saturation;
     uint8_t contrast;
+} setting_image_video_t;
+
+typedef struct {
+    uint8_t oled;
     uint8_t auto_off; // 0=1min,1=3min,2=4min,3=5min,4=never,
+    setting_image_video_t analog;
+    setting_image_video_t hdzero;
 } setting_image_t;
 
 typedef struct {
@@ -133,6 +159,7 @@ typedef struct {
 typedef struct {
     bool enable;
     bool vtx_send_enable; // master switch: may VTX channel commands be sent at all
+    bool auto_send_vtx;   // dial click also sends the channel, not just a long press
 } setting_elrs_t;
 
 typedef enum {
@@ -177,6 +204,7 @@ typedef enum {
     OSD_GOGGLE_ANT1,
     OSD_GOGGLE_ANT2,
     OSD_GOGGLE_ANT3,
+    OSD_GOGGLE_ANALOG_RSSI,
     OSD_GOGGLE_TEMP_TOP,
     OSD_GOGGLE_TEMP_LEFT,
     OSD_GOGGLE_TEMP_RIGHT,
@@ -264,17 +292,21 @@ typedef enum {
 } setting_sources_hdzero_band_t;
 typedef enum {
     SETTING_SOURCES_HDZERO_BW_WIDE = 0,
-    SETTING_SOURCES_HDZERO_BW_NARROW = 1
+    SETTING_SOURCES_HDZERO_BW_NARROW = 1,
+    SETTING_SOURCES_HDZERO_BW_BOTH = 2 // BoxPro: scan/auto-detect sweep both
 } setting_sources_hdzero_bw_t;
 
 typedef struct {
     setting_sources_analog_module_t analog_module;
     setting_sources_analog_format_t analog_format; // 0=NTSC, 1= PAL
-    setting_sources_analog_ratio_t analog_ratio;   // 0=4:3, 1=16:9
+    bool analog_auto;                               // G1: auto-detect NTSC/PAL (gates AV_in_detect)
+    setting_sources_analog_ratio_t analog_ratio;    // 0=4:3, 1=16:9
     setting_sources_hdzero_band_t hdzero_band;
     setting_sources_hdzero_bw_t hdzero_bw;
-    bool dial_lowband; // channel dial also scrolls through Lowband L1-L8
     uint8_t analog_channel;
+    bool    auto_protocol_detect; // BoxPro: probe both HDZ + analog on dial events
+    uint8_t analog_scan_band;     // BoxPro: last band picked on analog scan (0..5 = A,B,E,F,R,L)
+    uint8_t scan_mode_initial;    // BoxPro: last Mode selected on Scan Now page (0=HDZ, 1=Analog, 2=Auto)
 } setting_sources_t;
 
 typedef struct {
@@ -323,6 +355,19 @@ typedef struct {
 
 extern setting_t g_setting;
 extern const setting_t g_setting_defaults;
+
+setting_image_video_t *settings_image_video(setting_image_source_t source);
+const setting_image_video_t *settings_image_video_defaults(setting_image_source_t source);
+
+// Runtime (non-persisted) record of the HDZ bandwidth that last locked a
+// signal. Only consulted when source.hdzero_bw == BOTH, to choose a concrete
+// bandwidth for live video. Defaults to Wide.
+extern uint8_t g_hdz_detected_bw;
+
+// Resolve source.hdzero_bw to a concrete bandwidth (0=Wide, 1=Narrow) for
+// opening the live HDZ pipeline. "Both" is a scan/detect-only setting and must
+// never reach the hardware, so it resolves to g_hdz_detected_bw.
+uint8_t hdzero_effective_bw(void);
 
 void settings_reset(void);
 void settings_init(void);

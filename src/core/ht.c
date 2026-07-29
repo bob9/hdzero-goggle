@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <math.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -44,7 +45,33 @@ static bool is_moving = true;
 static volatile bool calibrating = false;
 static int calibration_count = 0;
 
+// Runtime gyro-bias tracking. The one-shot calibration stores an integer-LSB
+// offset (gyr_offset); at +-2000 dps that floor leaves up to ~1.8 deg/min of
+// residual yaw bias, which the 6-axis fusion cannot correct (no heading
+// reference) and which integrates into pan drift. gyr_bias_dyn is a float,
+// sensor-frame correction that is continuously re-estimated while the goggles
+// are held still, nulling that residual. Frozen while moving so real head
+// motion is never absorbed. Operates upstream of rotate()/imu_orientation, so
+// it is platform-agnostic (helps Goggle, Goggle2 and BoxPro alike).
+static float gyr_bias_dyn[3] = {0.0f, 0.0f, 0.0f}; // float LSB correction, sensor frame
+static int gyr_still_cnt = 0;                       // consecutive stationary ticks
+
+#define GYR_STILL_DPS    1.5f                          // per-axis "stationary" threshold (deg/s)
+#define GYR_STILL_TICKS  (AHRS_UPDATE_FREQUENCY / 2)   // must be still this long before tracking (0.5s)
+#define GYR_BIAS_TC_SEC  20                            // bias IIR time constant (seconds)
+#define GYR_BIAS_K       (1.0f / (GYR_BIAS_TC_SEC * AHRS_UPDATE_FREQUENCY))
+
+// Intrinsic Tait-Bryan body-frame rotation (X -> Y -> Z, see util/math.c::rotate)
+// applied identically to gyro and accel before Madgwick fusion. Aligns IMU
+// axes with the device frame so pan/tilt/roll are independent at Madgwick output.
+#if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
+// 23 deg accounts for the goggle visor cant.
 static const float imu_orientation[3] = {0.0 * DEG_TO_RAD, -90.0 * DEG_TO_RAD, (-90.0 + 23.0) * DEG_TO_RAD};
+#elif defined(HDZBOXPRO)
+// BoxPro IMU is mounted at ~30 deg around device-X (chip not horizontal).
+// Determined empirically; do not change without re-tuning on hardware.
+static const float imu_orientation[3] = {-30.0 * DEG_TO_RAD, -90.0 * DEG_TO_RAD, -67.0 * DEG_TO_RAD};
+#endif
 
 static const int ppmMaxPulse = 500;
 static const int ppmMinPulse = -500;
@@ -135,7 +162,7 @@ static void detect_motion(bool is_moving) {
         if (cnt == 2) {
             if (g_hw_stat.source_mode == SOURCE_MODE_HDZERO) {
                 uint8_t ch = g_setting.scan.channel - 1;
-                HDZero_open(g_setting.source.hdzero_bw);
+                HDZero_open(hdzero_effective_bw());
                 DM6302_SetChannel(g_setting.source.hdzero_band, ch & 0x7F);
             }
             if (g_hw_stat.source_mode == SOURCE_MODE_AV) {
@@ -265,10 +292,10 @@ void ht_set_alarm_angle() {
 
 static void calc_gyr(float *gyrAngle) // in degree
 {
-    // convert gyro readings to degrees/sec (with calibration offsets)
-    gyrAngle[0] = gyr_to_dps(ht_data.sensor_data.gyr.x - ht_data.gyr_offset[0]);
-    gyrAngle[1] = gyr_to_dps(ht_data.sensor_data.gyr.y - ht_data.gyr_offset[1]);
-    gyrAngle[2] = gyr_to_dps(ht_data.sensor_data.gyr.z - ht_data.gyr_offset[2]);
+    // convert gyro readings to degrees/sec (calibration offset + runtime bias)
+    gyrAngle[0] = gyr_to_dps_f((float)ht_data.sensor_data.gyr.x - ht_data.gyr_offset[0] - gyr_bias_dyn[0]);
+    gyrAngle[1] = gyr_to_dps_f((float)ht_data.sensor_data.gyr.y - ht_data.gyr_offset[1] - gyr_bias_dyn[1]);
+    gyrAngle[2] = gyr_to_dps_f((float)ht_data.sensor_data.gyr.z - ht_data.gyr_offset[2] - gyr_bias_dyn[2]);
     rotate(gyrAngle, imu_orientation);
 }
 
@@ -285,6 +312,10 @@ void ht_calibrate() {
     LOGI("HT calibration...");
     ht_data.acc_offset[0] = ht_data.acc_offset[1] = ht_data.acc_offset[2] = 0;
     ht_data.gyr_offset[0] = ht_data.gyr_offset[1] = ht_data.gyr_offset[2] = 0;
+
+    // Fresh baseline: drop the runtime bias correction so it re-converges from 0.
+    gyr_bias_dyn[0] = gyr_bias_dyn[1] = gyr_bias_dyn[2] = 0.0f;
+    gyr_still_cnt = 0;
 
     calibration_count = 0;
     calibrating = true;
@@ -309,6 +340,39 @@ void ht_calibrate() {
     LOGI("done!");
 }
 
+// Re-estimate the gyro bias while the goggles are held still. corr[] is the
+// current bias-corrected gyro reading (LSB, sensor frame); when the device is
+// stationary that residual is the leftover bias, so a slow IIR pulls
+// gyr_bias_dyn toward it and the corrected rate trends to zero. Frozen while
+// moving so genuine head motion is never absorbed.
+static void update_gyro_bias() {
+    float corr[3], dps[3];
+    corr[0] = (float)ht_data.sensor_data.gyr.x - ht_data.gyr_offset[0] - gyr_bias_dyn[0];
+    corr[1] = (float)ht_data.sensor_data.gyr.y - ht_data.gyr_offset[1] - gyr_bias_dyn[1];
+    corr[2] = (float)ht_data.sensor_data.gyr.z - ht_data.gyr_offset[2] - gyr_bias_dyn[2];
+    dps[0] = gyr_to_dps_f(corr[0]);
+    dps[1] = gyr_to_dps_f(corr[1]);
+    dps[2] = gyr_to_dps_f(corr[2]);
+
+    bool still = fabsf(dps[0]) < GYR_STILL_DPS &&
+                 fabsf(dps[1]) < GYR_STILL_DPS &&
+                 fabsf(dps[2]) < GYR_STILL_DPS;
+
+    if (!still) {
+        gyr_still_cnt = 0;
+        return;
+    }
+
+    if (gyr_still_cnt < GYR_STILL_TICKS) {
+        gyr_still_cnt++;
+        return;
+    }
+
+    gyr_bias_dyn[0] += GYR_BIAS_K * corr[0];
+    gyr_bias_dyn[1] += GYR_BIAS_K * corr[1];
+    gyr_bias_dyn[2] += GYR_BIAS_K * corr[2];
+}
+
 static void calculate_orientation() {
     float gyrAngle[3], accAngle[3];
     float tmp;
@@ -326,12 +390,13 @@ static void calculate_orientation() {
         calibration_count++;
         if (calibration_count == 1 << CALIBRATION_BCNT)
             calibrating = false;
+    } else {
+        // Not while calibrating: gyr_offset holds a running sum mid-calibration.
+        update_gyro_bias();
     }
 
     calc_gyr(gyrAngle);
     calc_acc(accAngle);
-    // LOGI("ACC=%.2f,%.2f,%.2f\tGYR=%.2f,%.2f,%.2f", accAngle[0], accAngle[1], accAngle[2],
-    //     gyrAngle[0], gyrAngle[1], gyrAngle[2]);
 
     MadgwickAHRSupdateIMU(gyrAngle[0] * DEG_TO_RAD, gyrAngle[1] * DEG_TO_RAD, gyrAngle[2] * DEG_TO_RAD,
                           accAngle[0], accAngle[1], accAngle[2]);
@@ -340,6 +405,18 @@ static void calculate_orientation() {
     ht_data.panAngle = getYaw() - ht_data.panAngleHome;
     ht_data.tiltAngle = getPitch() - ht_data.tiltAngleHome;
     ht_data.rollAngle = getRoll() - ht_data.rollAngleHome;
+
+    // One-time auto-center after startup. The home offsets boot as 0, so
+    // until the user re-centers, the angles are absolute fusion output; on
+    // mountings whose worn pose sits far from the fusion's zero (BoxPro
+    // rests at roll ~-80 deg) every axis starts pegged. Wait out the
+    // Madgwick convergence from the boot quaternion (beta 0.1 closes ~80
+    // deg in ~15 s), then adopt the current pose as center once.
+    static int settle_cnt = 0;
+    if (settle_cnt >= 0 && ++settle_cnt == AHRS_UPDATE_FREQUENCY * 20) {
+        ht_set_center_position();
+        settle_cnt = -1;
+    }
 
 #if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
     tmp = normalize(ht_data.panAngle, -180.0, 180.0) * ht_data.panInverse * ht_data.panFactor + 0.5;

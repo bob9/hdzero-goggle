@@ -26,6 +26,8 @@ bool record_pending = false;
 
 static time_t dvr_recording_start = 0;
 static pthread_mutex_t dvr_mutex;
+static bool live_audio_line_out_enabled = false;
+static bool live_audio_muted_for_dvr = false;
 
 // Race label for the next recording, pushed by a race timer over the ELRS
 // backpack (MSP_SET_DVR_NAME). It expires so a recording made well after the
@@ -39,6 +41,7 @@ static time_t dvr_race_label_time = 0;
 void dvr_set_race_label(const uint8_t *label, uint16_t len) {
     char clean[REC_labelMAXLEN];
     size_t n = 0;
+
     for (uint16_t i = 0; i < len && n < sizeof(clean) - 1; i++) {
         char c = (char)label[i];
         if (isalnum((unsigned char)c) || c == '-' || c == '_') {
@@ -49,10 +52,26 @@ void dvr_set_race_label(const uint8_t *label, uint16_t len) {
     }
     clean[n] = 0;
 
+    pthread_mutex_lock(&dvr_mutex);
+    if (g_setting.record.naming != SETTING_NAMING_ELRS) {
+        dvr_race_label[0] = 0;
+        dvr_race_label_time = 0;
+        pthread_mutex_unlock(&dvr_mutex);
+        return;
+    }
     strcpy(dvr_race_label, clean);
     dvr_race_label_time = time(NULL);
-    LOGI("dvr race label set to \"%s\"", dvr_race_label);
+    pthread_mutex_unlock(&dvr_mutex);
+    LOGI("dvr race label set to \"%s\"", clean);
 }
+
+void dvr_clear_race_label(void) {
+    pthread_mutex_lock(&dvr_mutex);
+    dvr_race_label[0] = 0;
+    dvr_race_label_time = 0;
+    pthread_mutex_unlock(&dvr_mutex);
+}
+
 
 ///////////////////////////////////////////////////////////////////
 //-1=error;
@@ -80,16 +99,150 @@ void dvr_update_status() {
 void dvr_enable_line_out(bool enable) {
     char buf[128];
     if (enable) {
+        live_audio_line_out_enabled = true;
+        live_audio_muted_for_dvr = false; // path below is fully reopened
         snprintf(buf, sizeof(buf), "%s out_on", AUDIO_SEL_SH);
         system_exec(buf);
+        dvr_set_live_audio_volume(g_setting.record.live_audio_volume);
         snprintf(buf, sizeof(buf), "%s out_linein_on", AUDIO_SEL_SH);
         system_exec(buf);
         snprintf(buf, sizeof(buf), "%s out_dac_off", AUDIO_SEL_SH);
         system_exec(buf);
     } else {
+        live_audio_line_out_enabled = false;
+        live_audio_muted_for_dvr = false;
         snprintf(buf, sizeof(buf), "%s out_off", AUDIO_SEL_SH);
         system_exec(buf);
     }
+}
+
+bool dvr_live_audio_is_enabled(void) {
+    return live_audio_line_out_enabled;
+}
+
+static int clamp_audio_volume(int volume) {
+    if (volume < 0)
+        return 0;
+    if (volume > 10)
+        return 10;
+    return volume;
+}
+
+static int dvr_volume_to_hardware(int volume) {
+    static const int volume_table[] = {0, 26, 28, 29, 29, 30, 30, 31, 31};
+
+    if (volume > 8)
+        volume = 8;
+    return volume_table[volume];
+}
+
+static int live_volume_to_lineout(int volume) {
+    return (volume * 31 + 5) / 10;
+}
+
+void dvr_set_dvr_audio_volume(int volume) {
+    char buf[128];
+    int hardware_volume;
+    int dac_volume;
+
+    volume = clamp_audio_volume(volume);
+
+    hardware_volume = dvr_volume_to_hardware(volume);
+    if (volume == 0)
+        dac_volume = 0;
+    else if (volume == 4)
+        dac_volume = 153;
+    else if (volume == 6)
+        dac_volume = 157;
+    else if (volume == 7)
+        dac_volume = 158;
+    else
+        dac_volume = (hardware_volume * 160 + 15) / 31;
+
+    snprintf(buf, sizeof(buf), "amixer cset name='lineout volume' %d", hardware_volume);
+    system_exec(buf);
+    snprintf(buf, sizeof(buf), "amixer cset name='DAC volume' %d,%d", dac_volume, dac_volume);
+    system_exec(buf);
+    snprintf(buf, sizeof(buf), "amixer cset name='AIF1 DAC timeslot 0 volume' %d,%d", dac_volume, dac_volume);
+    system_exec(buf);
+    snprintf(buf, sizeof(buf), "amixer cset name='AIF1 DAC timeslot 1 volume' %d,%d", dac_volume, dac_volume);
+    system_exec(buf);
+}
+
+void dvr_set_live_audio_volume(int volume) {
+    char buf[128];
+    int lineout_volume;
+    int linein_gain;
+
+    volume = clamp_audio_volume(volume);
+    lineout_volume = live_volume_to_lineout(volume);
+    linein_gain = (volume * volume * volume * 7 + 500) / 1000;
+    if (volume > 0 && linein_gain == 0)
+        linein_gain = 1;
+
+    snprintf(buf, sizeof(buf), "amixer cset name='lineout volume' %d", lineout_volume);
+    system_exec(buf);
+    snprintf(buf, sizeof(buf), "amixer cset name='LINEINL/R to L_R output mixer gain' %d", linein_gain);
+    system_exec(buf);
+}
+
+static int clamp_record_gain(int gain) {
+    if (gain < 0)
+        return 0;
+    if (gain > 7)
+        return 7;
+    return gain;
+}
+
+void dvr_set_mic_gain(int gain) {
+    char buf[128];
+
+    gain = clamp_record_gain(gain);
+    snprintf(buf, sizeof(buf), "amixer cset name='MIC1 boost AMP gain control' %d", gain);
+    system_exec(buf);
+}
+
+void dvr_set_linein_gain(int gain) {
+    char buf[128];
+
+    gain = clamp_record_gain(gain);
+    snprintf(buf, sizeof(buf), "amixer cset name='ADC input gain control' %d", gain);
+    system_exec(buf);
+    snprintf(buf, sizeof(buf), "amixer cset name='MIC2 boost AMP gain control' %d", gain);
+    system_exec(buf);
+}
+
+static void dvr_apply_record_audio_gain(uint8_t source) {
+    if (source == SETTING_RECORD_AUDIO_SOURCE_MIC) {
+        dvr_set_mic_gain(g_setting.record.mic_gain);
+    } else {
+        dvr_set_linein_gain(g_setting.record.linein_gain);
+    }
+}
+
+void dvr_mute_live_audio(void) {
+    char buf[128];
+
+    // Unconditional on purpose: live_audio_line_out_enabled can go stale
+    // (boot never sets it, and a source switch mid audio-test can desync it),
+    // and a skipped mute here means live audio mixes into DVR playback.
+    // Cutting LINEIN with the line out already off is harmless.
+    snprintf(buf, sizeof(buf), "%s out_linein_off", AUDIO_SEL_SH);
+    system_exec(buf);
+    system_exec("amixer cset name='LINEINL/R to L_R output mixer gain' 0");
+    live_audio_muted_for_dvr = true;
+}
+
+void dvr_restore_live_audio(void) {
+    char buf[128];
+
+    if (!live_audio_muted_for_dvr || !live_audio_line_out_enabled)
+        return;
+
+    dvr_set_live_audio_volume(g_setting.record.live_audio_volume);
+    snprintf(buf, sizeof(buf), "%s out_linein_on", AUDIO_SEL_SH);
+    system_exec(buf);
+    live_audio_muted_for_dvr = false;
 }
 
 void dvr_select_audio_source(uint8_t source) {
@@ -103,6 +256,7 @@ void dvr_select_audio_source(uint8_t source) {
         source = 2;
     snprintf(buf, sizeof(buf), "%s %s", AUDIO_SEL_SH, audio_source[source]);
     system_exec(buf);
+    dvr_apply_record_audio_gain(source);
 }
 
 // video input config
@@ -189,7 +343,6 @@ void dvr_update_vi_conf(video_resolution_t fmt) {
 #endif
     }
     pthread_mutex_unlock(&dvr_mutex);
-    sync();
 
     LOGI("update_record_vi_conf: fmt=%d", fmt);
 }
@@ -352,12 +505,15 @@ static void dvr_update_record_conf() {
     dvr_select_audio_source(g_setting.record.audio_source);
     ini_putl("record", "naming", g_setting.record.naming, REC_CONF);
 
-    // Pass the race label to the record process; always written so a stale
-    // label never survives in the conf, and expired labels are dropped
-    if (dvr_race_label[0] && time(NULL) - dvr_race_label_time > DVR_RACE_LABEL_TTL_S) {
+    // Only the ELRS naming scheme consumes race labels. Clear the pending
+    // label when another scheme is selected so it cannot leak into a later
+    // non-ELRS recording.
+    if (g_setting.record.naming != SETTING_NAMING_ELRS) {
+        dvr_race_label[0] = 0;
+    } else if (dvr_race_label[0] && time(NULL) - dvr_race_label_time > DVR_RACE_LABEL_TTL_S) {
         dvr_race_label[0] = 0;
     }
-    ini_puts("record", "label", dvr_race_label, REC_CONF);
+    ini_puts("record", "label", g_setting.record.naming == SETTING_NAMING_ELRS ? dvr_race_label : "", REC_CONF);
 
     sync();
 }

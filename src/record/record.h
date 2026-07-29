@@ -43,7 +43,8 @@ typedef enum
 
 typedef enum {
     NAMING_CONTIGUOUS,
-    NAMING_DATE
+    NAMING_DATE,
+    NAMING_ELRS
 } FileNaming_t;
 
 typedef struct

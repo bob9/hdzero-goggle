@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <log/log.h>
@@ -25,9 +26,12 @@
 #include "core/ht.h"
 #include "core/msp_displayport.h"
 #include "core/osd.h"
+#include "core/scan_core.h"
 #include "core/settings.h"
 #include "driver/beep.h"
 #include "driver/dm5680.h"
+#include "driver/dm6302.h"
+#include "driver/esp32.h"
 #include "driver/hardware.h"
 #include "driver/rtc.h"
 #include "driver/uart.h"
@@ -145,30 +149,63 @@ static bool hdz_index2bandch(uint8_t index, uint8_t *band, uint8_t *channel) {
     return true;
 }
 
-static void channel_channel_hdzero(uint8_t const band, uint8_t const channel) {
-    uint8_t const max_channel = (band == SETTING_SOURCES_HDZERO_BAND_RACEBAND) ? 12 : 8;
+static uint8_t hdz_index2ch(uint8_t index) {
+    uint8_t chan;
+
+    if (index < 48)
+        chan = hdzero_channel_map[index];
+    else
+        chan = 0;
+
+    return chan;
+}
+
+static const scan_freq_entry_t *find_freq_entry_by_mhz(uint16_t freq) {
+    int idx = scan_freq_table_find_by_mhz(freq);
+    if (idx < 0)
+        return NULL;
+    return &scan_freq_table[idx];
+}
+
+static const scan_freq_entry_t *find_freq_entry_by_elrs_index(uint8_t index) {
+    if (index >= ANALOG_CHANNEL_NUM)
+        return NULL;
+    return find_freq_entry_by_mhz(freq_table[index]);
+}
+
+static void change_channel_hdzero(uint8_t const band, uint8_t const channel) {
+    uint8_t max_channel = (band == SETTING_SOURCES_HDZERO_BAND_LOWBAND)
+                              ? 8 : BASE_CH_NUM;
     if (channel == 0 || channel > max_channel) {
-        LOGE("Invalid HDZero channel %d for band %d", channel, band);
+        LOGE("Invalid HDZero band/channel %d/%d", band, channel);
         return;
     }
-    bool const band_changed = g_setting.source.hdzero_band != band;
-    if (band_changed || (g_setting.scan.channel & 0xF) != channel || g_app_state != APP_STATE_VIDEO) {
+
+    if (g_setting.source.hdzero_band != band ||
+        (g_setting.scan.channel & 0x7F) != channel ||
+        g_source_info.source != SOURCE_HDZERO ||
+        g_app_state != APP_STATE_VIDEO) {
+        g_setting.source.hdzero_band = band;
+        ini_putl("source", "hdzero_band", g_setting.source.hdzero_band, SETTING_INI);
         g_setting.scan.channel = channel;
         ini_putl("scan", "channel", g_setting.scan.channel, SETTING_INI);
         beep();
         pthread_mutex_lock(&lvgl_mutex);
-        if (band_changed) {
-            // Same steps as the source menu's Raceband/Lowband toggle;
-            // app_switch_to_hdzero below re-tunes with the new band
-            g_setting.source.hdzero_band = band;
-            page_scannow_set_channel_label();
-            ini_putl("source", "hdzero_band", g_setting.source.hdzero_band, SETTING_INI);
-        }
+        // The band is already committed above; keep the scan page's channel
+        // labels in step with it before app_switch_to_hdzero re-tunes.
+        page_scannow_set_channel_label();
         dvr_cmd(DVR_STOP);
         app_switch_to_hdzero(true);
         app_state_push(APP_STATE_VIDEO);
+        g_source_info.source = SOURCE_HDZERO;
+        dvr_select_audio_source(g_setting.record.audio_source);
+        dvr_enable_line_out(true);
         pthread_mutex_unlock(&lvgl_mutex);
     }
+}
+
+static void channel_channel_hdzero(uint8_t const channel) {
+    change_channel_hdzero(g_setting.source.hdzero_band, channel);
 }
 
 static void change_channel_analog(uint8_t const channel) {
@@ -184,6 +221,9 @@ static void change_channel_analog(uint8_t const channel) {
         dvr_cmd(DVR_STOP);
         app_switch_to_analog(0);
         app_state_push(APP_STATE_VIDEO);
+        g_source_info.source = SOURCE_AV_MODULE;
+        dvr_select_audio_source(g_setting.record.audio_source);
+        dvr_enable_line_out(true);
         pthread_mutex_unlock(&lvgl_mutex);
     }
 }
@@ -335,25 +375,45 @@ void msp_process_packet() {
             if (g_source_info.source == SOURCE_HDZERO) {
                 chan = hdz_ch2index(g_setting.source.hdzero_band, g_setting.scan.channel);
             } else if (g_source_info.source == SOURCE_AV_MODULE) {
-                chan = g_setting.scan.channel - 1;
+                chan = g_setting.source.analog_channel - 1;
             }
             msp_send_packet(MSP_GET_BAND_CHAN, MSP_PACKET_RESPONSE, 1, &chan);
         } break;
         case MSP_SET_BAND_CHAN: {
             uint8_t const chan = packet.payload[0];
-            if (g_source_info.source == SOURCE_HDZERO) {
-                uint8_t band, new_ch;
-                if (hdz_index2bandch(chan, &band, &new_ch)) {
-                    channel_channel_hdzero(band, new_ch);
-                } else {
-                    LOGE("No HDZero channel for VTx table index %d", chan);
-                }
-            } else {
+            const scan_freq_entry_t *entry = find_freq_entry_by_elrs_index(chan);
+            bool applied = false;
+            if (entry && entry->hdz_band >= 0 && entry->hdz_channel >= 0 &&
+                (g_source_info.source == SOURCE_HDZERO ||
+                 g_setting.source.auto_protocol_detect)) {
+                change_channel_hdzero((uint8_t)entry->hdz_band,
+                                      (uint8_t)entry->hdz_channel + 1);
+                applied = true;
+            }
 #if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
-                if (g_source_info.source == SOURCE_AV_MODULE) {
-                    change_channel_analog(chan + 1);
-                }
+            if (!applied && g_setting.source.auto_protocol_detect &&
+                entry && entry->analog_channel >= 0) {
+                // Auto Detect: an analog-capable frequency with no HDZero
+                // channel (the HDZ block above did not apply). Switch to analog
+                // from whatever source we are on. Previously this was gated on
+                // already viewing the analog source, so picking an analog-only
+                // channel while on HDZero did nothing -- and scrolling appeared
+                // to skip every analog channel.
+                change_channel_analog((uint8_t)entry->analog_channel + 1);
+                applied = true;
+            } else if (!applied && g_source_info.source == SOURCE_AV_MODULE) {
+                // Fixed analog source.
+                change_channel_analog(chan + 1);
+                applied = true;
+            }
 #endif
+            if (!applied && g_source_info.source == SOURCE_HDZERO) {
+                uint8_t const hdz_ch = hdz_index2ch(chan);
+                if (hdz_ch == 0) {
+                    LOGE("Invalid HDZero channel for ELRS index %d", chan);
+                } else {
+                    channel_channel_hdzero(hdz_ch);
+                }
             }
         } break;
         case MSP_GET_FREQ: {
@@ -363,7 +423,7 @@ void msp_process_packet() {
             if (g_source_info.source == SOURCE_HDZERO) {
                 ch = hdz_ch2index(g_setting.source.hdzero_band, g_setting.scan.channel) + 1;
             } else if (g_source_info.source == SOURCE_AV_MODULE) {
-                ch = g_setting.scan.channel;
+                ch = g_setting.source.analog_channel;
             }
             freq = ch == 0 ? 0 : freq_table[ch - 1];
             buf[0] = freq & 0xff;
@@ -373,19 +433,48 @@ void msp_process_packet() {
         case MSP_SET_FREQ: {
             uint16_t const freq = packet.payload[0] | (uint16_t)packet.payload[1] << 8;
             int const freq_index = get_freq_index(freq);
-            if (freq_index < 0) {
+            const scan_freq_entry_t *entry = find_freq_entry_by_mhz(freq);
+            if (freq_index < 0 && !entry) {
                 LOGE("Invalid frequency %d", freq);
                 break;
             }
-            if (g_source_info.source == SOURCE_HDZERO) {
-                uint8_t band, new_ch;
-                if (!hdz_index2bandch(freq_index, &band, &new_ch)) {
+            bool applied = false;
+            if (entry && entry->hdz_band >= 0 && entry->hdz_channel >= 0 &&
+                (g_source_info.source == SOURCE_HDZERO ||
+                 g_setting.source.auto_protocol_detect)) {
+                change_channel_hdzero((uint8_t)entry->hdz_band,
+                                      (uint8_t)entry->hdz_channel + 1);
+                applied = true;
+            }
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+            if (!applied && g_setting.source.auto_protocol_detect &&
+                entry && entry->analog_channel >= 0) {
+                // Auto Detect: analog-capable frequency, no HDZero channel.
+                // Switch to analog from any source (see MSP_SET_BAND_CHAN).
+                change_channel_analog((uint8_t)entry->analog_channel + 1);
+                applied = true;
+            } else if (!applied && g_source_info.source == SOURCE_AV_MODULE) {
+                if (entry && entry->analog_channel >= 0) {
+                    change_channel_analog((uint8_t)entry->analog_channel + 1);
+                } else if (freq_index >= 0) {
+                    change_channel_analog(freq_index + 1);
+                } else {
+                    LOGE("Invalid analog channel for frequency %d", freq);
+                }
+                applied = true;
+            }
+#endif
+            if (!applied && g_source_info.source == SOURCE_HDZERO) {
+                if (freq_index < 0) {
                     LOGE("Invalid HDZero channel for frequency %d", freq);
                     break;
                 }
-                channel_channel_hdzero(band, new_ch);
-            } else if (g_source_info.source == SOURCE_AV_MODULE) {
-                change_channel_analog(freq_index + 1);
+                uint8_t const new_ch = hdzero_channel_map[freq_index];
+                if (new_ch == 0) {
+                    LOGE("Invalid HDZero channel for frequency %d", freq);
+                    break;
+                }
+                channel_channel_hdzero(new_ch);
             }
         } break;
         case MSP_GET_REC_STATE: {
@@ -465,7 +554,7 @@ void msp_process_packet() {
             break;
         case MSP_SET_DVR_NAME:
             // A race timer naming the next DVR recording, e.g. "WinterCup-Qual1-H2".
-            // An empty payload clears the pending name.
+            // dvr_set_race_label ignores it unless the ELRS naming scheme is active.
             dvr_set_race_label(packet.payload, packet.payload_size);
             break;
         }
@@ -551,9 +640,9 @@ bool msp_channel_update() {
     uint8_t const band = g_setting.source.hdzero_band;
     uint8_t chan;
 
-    // VTX Control is the master switch for transmitting channel changes
-    // to the drone - with it off no path may send.
-    if (!g_setting.elrs.vtx_send_enable)
+    // This is the final authority check: no UI or assignable button may
+    // transmit a channel while the backpack or VTX Control is off.
+    if (!g_setting.elrs.enable || !g_setting.elrs.vtx_send_enable)
         return false;
 
     if (ch == 0 || ch > HDZERO_CHANNEL_NUM)
@@ -592,6 +681,50 @@ void elrs_clear_osd() {
             elrs_osd_overlay[i][j] = 0x20;
         }
     }
+}
+
+// A boot-time bring-up race can still occasionally leave the backpack ESP
+// wedged (see the readiness-gated power-on in main.c). This is a background
+// backstop: if the backpack stops answering a basic MSP heartbeat, power-
+// cycle it once. Capped at one recovery per session -- the backpack's own
+// EEPROM boot counter enters WiFi/bind mode after 3 boots within 30s (its
+// "triple tap" binding feature), and one initial boot plus one recovery boot
+// stays safely under that.
+#define ELRS_WATCHDOG_TICK_MS    2000
+#define ELRS_WATCHDOG_MISS_LIMIT 5 // ~10s of silence before recovering
+
+volatile time_t g_elrs_msp_busy_until = 0;
+static uint8_t watchdog_misses = 0;
+static bool watchdog_recovered = false;
+
+static void elrs_watchdog_timer(struct _lv_timer_t *timer) {
+    uint8_t version[32] = {0};
+    uint16_t size = sizeof(version) - 1;
+
+    if (!g_setting.elrs.enable || watchdog_recovered) {
+        lv_timer_del(timer);
+        return;
+    }
+
+    if (time(NULL) < g_elrs_msp_busy_until)
+        return; // a UI flow (Bind, WiFi start, version/UID lookup) owns the response slot right now
+
+    if (msp_read_resposne(MSP_GET_BP_VERSION, &size, version)) {
+        watchdog_misses = 0;
+        return;
+    }
+
+    msp_send_packet(MSP_GET_BP_VERSION, MSP_PACKET_COMMAND, 0, NULL);
+    if (++watchdog_misses >= ELRS_WATCHDOG_MISS_LIMIT) {
+        LOGE("[ELRS] backpack heartbeat lost, power-cycling once");
+        watchdog_recovered = true;
+        disable_esp32();
+        enable_esp32();
+    }
+}
+
+void elrs_watchdog_start() {
+    lv_timer_create(elrs_watchdog_timer, ELRS_WATCHDOG_TICK_MS, NULL);
 }
 
 static void handle_osd(uint8_t payload[], uint8_t size) {

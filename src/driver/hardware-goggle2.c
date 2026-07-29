@@ -39,19 +39,19 @@ int fhd_req = 0;
 pthread_mutex_t hardware_mutex;
 
 uint32_t vclk_phase_default[VIDEO_SOURCE_NUM] = {
-    // 0x??,  0x8e,  0x??, 0x??
-    0x0000000c, // VIDEO_SOURCE_VERSION
-    0x00200000, // VIDEO_SOURCE_MENU_UI
-    0x00010000, // VIDEO_SOURCE_HDZERO_IN_720P60_50
-    0x00200000, // VIDEO_SOURCE_HDZERO_IN_720P90
-    0x00000000, // VIDEO_SOURCE_HDZERO_IN_1080P30
-    0x00010000, // VIDEO_SOURCE_AV_IN
-    0x00200000, // VIDEO_SOURCE_HDMI_IN_1080P50
-    0x00200000, // VIDEO_SOURCE_HDMI_IN_1080P60
-    0x00000000, // VIDEO_SOURCE_HDMI_IN_1080POTHER
-    0x00000000, // VIDEO_SOURCE_HDMI_IN_720P50
-    0x00000000, // VIDEO_SOURCE_HDMI_IN_720P60
-    0x00200000, // VIDEO_SOURCE_HDMI_IN_720P100
+    // 0x8d,  0x8e,  0x14,  hdmi_out
+    0x00000006, // VIDEO_SOURCE_VERSION
+    0x10840000, // VIDEO_SOURCE_MENU_UI
+    0x10840000, // VIDEO_SOURCE_HDZERO_IN_720P60_50
+    0x10840000, // VIDEO_SOURCE_HDZERO_IN_720P90
+    0x10840000, // VIDEO_SOURCE_HDZERO_IN_1080P30
+    0x10840000, // VIDEO_SOURCE_AV_IN
+    0x10040000, // VIDEO_SOURCE_HDMI_IN_1080P50
+    0x10040000, // VIDEO_SOURCE_HDMI_IN_1080P60
+    0x10040000, // VIDEO_SOURCE_HDMI_IN_1080POTHER
+    0x00040000, // VIDEO_SOURCE_HDMI_IN_720P50
+    0x00040000, // VIDEO_SOURCE_HDMI_IN_720P60
+    0x10040000, // VIDEO_SOURCE_HDMI_IN_720P100
     0x00000000, // VIDEO_SOURCE_TP2825_EX
 };
 
@@ -64,15 +64,15 @@ bit[5:4] hdmi out
 bit[6]   oled
 */
 uint32_t pclk_phase_default[VIDEO_SOURCE_NUM] = {
-    0x00000003,
-    0x00000000, // VIDEO_SOURCE_MENU_UI
+    0x00000001,
+    0x00000004, // VIDEO_SOURCE_MENU_UI
     0x00000000, // VIDEO_SOURCE_HDZERO_IN_720P60_50
     0x00000000, // VIDEO_SOURCE_HDZERO_IN_720P90
     0x00000000, // VIDEO_SOURCE_HDZERO_IN_1080P30
     0x00000000, // VIDEO_SOURCE_AV_IN
-    0x00000001, // VIDEO_SOURCE_HDMI_IN_1080P50
-    0x00000001, // VIDEO_SOURCE_HDMI_IN_1080P60
-    0x00000001, // VIDEO_SOURCE_HDMI_IN_1080POTHER
+    0x00000000, // VIDEO_SOURCE_HDMI_IN_1080P50
+    0x00000000, // VIDEO_SOURCE_HDMI_IN_1080P60
+    0x00000000, // VIDEO_SOURCE_HDMI_IN_1080POTHER
     0x00000000, // VIDEO_SOURCE_HDMI_IN_720P50
     0x00000000, // VIDEO_SOURCE_HDMI_IN_720P60
     0x00000000, // VIDEO_SOURCE_HDMI_IN_720P100
@@ -262,11 +262,33 @@ uint8_t vclk_phase_inv_read_file(char *file_path) {
 
             vclk_phase[mode] = vclk_phase_default[mode];
 
-            if ((value >> 0) & 1) // 0x8e[0]
-                vclk_phase[mode] ^= (1 << 16);
+            if (mode == VIDEO_SOURCE_TP2825_EX) {
+                vclk_phase[mode] = value;
+            } else {
+                if ((value >> 0) & 1) // 14[0]
+                    vclk_phase[mode] ^= (1 << 8);
 
-            if ((value >> 1) & 1) // 0x8e[5]
-                vclk_phase[mode] ^= (1 << 21);
+                if ((value >> 1) & 1) // 8e[7]
+                    vclk_phase[mode] ^= (1 << 23);
+
+                if ((value >> 2) & 1) // 8d[2]
+                    vclk_phase[mode] ^= (1 << 26);
+
+                if ((value >> 3) & 1) // hdmi out_0
+                    vclk_phase[mode] ^= (1 << 0);
+
+                if ((value >> 4) & 1) // hdmi out_1
+                    vclk_phase[mode] ^= (1 << 1);
+
+                if ((value >> 5) & 1) // 8d[4]
+                    vclk_phase[mode] ^= (1 << 28);
+
+                if ((value >> 6) & 1) // 8d[3]
+                    vclk_phase[mode] ^= (1 << 27);
+
+                if ((value >> 7) & 1) // 8e[2]
+                    vclk_phase[mode] ^= (1 << 18);
+            }
 
             LOGI("%s 0x%02x, ori:0x%08x new:0x%08x", type_str, value, vclk_phase_default[mode], vclk_phase[mode]);
         }
@@ -336,14 +358,14 @@ void vclk_phase_load_system() {
 
     if (vclk_phase_read_file("/etc/vclk_phase.cfg")) {
         // if no .cfg file, write it.
-        vclk_phase_write_file("/etc/vclk_phase.cfg", vclk_phase_default);
+        // vclk_phase_write_file("/etc/vclk_phase.cfg", vclk_phase_default);
 
         for (i = 0; i < VIDEO_SOURCE_NUM; i++) {
             vclk_phase[i] = vclk_phase_default[i];
         }
     } else if (vclk_phase_load[VIDEO_SOURCE_VERSION] != 0xffffffff && vclk_phase_load[VIDEO_SOURCE_VERSION] != vclk_phase_default[VIDEO_SOURCE_VERSION]) {
         // newer .cfg file version
-        vclk_phase_write_file("/etc/vclk_phase.cfg", vclk_phase_default);
+        // vclk_phase_write_file("/etc/vclk_phase.cfg", vclk_phase_default);
 
         for (i = 0; i < VIDEO_SOURCE_NUM; i++) {
             vclk_phase[i] = vclk_phase_default[i];
@@ -389,7 +411,7 @@ void vclk_phase_inv_load_sdcard() {
         return;
     }
 
-    vclk_phase_write_file("/etc/vclk_phase.cfg", vclk_phase);
+    // vclk_phase_write_file("/etc/vclk_phase.cfg", vclk_phase);
 
     system_exec("rm /mnt/extsd/vclk_phase_inv.txt");
 }
@@ -419,7 +441,7 @@ void pclk_phase_dump() {
 
 void vclk_phase_init() {
     vclk_phase_load_system();
-    vclk_phase_inv_load_sdcard();
+    // vclk_phase_inv_load_sdcard();
     vclk_phase_dump();
 }
 
@@ -429,7 +451,20 @@ void pclk_phase_init() {
 }
 
 void vclk_phase_set(video_source_t source, uint8_t reg_8d_sel) {
-    I2C_Write(ADDR_FPGA, 0x8e, (vclk_phase[source] >> 16) & 0xff);
+    if (reg_8d_sel)
+        I2C_Write(ADDR_FPGA, 0x8d, (((vclk_phase[source] >> 24) & 0xff) ^ (1 << 4)));
+    else
+        I2C_Write(ADDR_FPGA, 0x8d, (vclk_phase[source] >> 24) & 0xff);
+
+    if (source == VIDEO_SOURCE_HDZERO_IN_720P60_50 || source == VIDEO_SOURCE_HDZERO_IN_720P90) {
+        I2C_Write(ADDR_FPGA, 0x8e, 0x01);
+    } else {
+        I2C_Write(ADDR_FPGA, 0x8e, (vclk_phase[source] >> 16) & 0xff);
+    }
+
+    I2C_Write(ADDR_AL, 0x14, (vclk_phase[source] >> 8) & 0xff);
+
+    IT66121_set_phase(vclk_phase[source] & 3, 0);
 }
 
 /*
@@ -480,7 +515,6 @@ void csic_pclk_invert_set(uint8_t is_invert) {
 }
 
 void pclk_phase_set(video_source_t source) {
-    LOGI("video_source:%d", source);
     LOGI("pclk_phase_set %d", pclk_phase[source]);
     // bit[0] hdmi in
     if (source == VIDEO_SOURCE_HDMI_IN_1080P50 || source == VIDEO_SOURCE_HDMI_IN_1080P60 || source == VIDEO_SOURCE_HDMI_IN_1080POTHER) {
@@ -504,6 +538,11 @@ void pclk_phase_set(video_source_t source) {
     I2C_Write(ADDR_AL, 0x14, (pclk_phase[source] >> 6) & 1);
 }
 void hw_stat_init() {
+    // The screen_vtmg() cache starts at mode 0, but the OLED keeps whatever
+    // mode a previous app instance left it in (e.g. killed during retimed DVR
+    // playback) -- invalidate so the first vtmg() call really programs it.
+    screen_vtmg_invalidate();
+
     g_hw_stat.source_mode = SOURCE_MODE_UI;
     g_hw_stat.vdpo_tmg = VDPO_TMG_1080P50;
 
@@ -555,7 +594,7 @@ void Display_UI_init() {
     I2C_Write(ADDR_FPGA, 0x84, 0x11);
 
     screen.vtmg(0);
-    system_exec("aww 0x0300b084 0x00003fff"); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
+    system_exec("aww 0x0300b084 0x00002aaa"); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
     I2C_Write(ADDR_FPGA, 0xa7, 0x00);
     system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
 }
@@ -792,18 +831,16 @@ int HDZERO_detect() // return = 1: vtmg to V536 changed
                 break;
             case VR_1080P30:
                 Display_1080P30_t(CAM_MODE);
-                break;
-            case VR_1080P24:
-                Display_1080P24_t(CAM_MODE);
+
                 break;
             default:
                 LOGW("cam_mode =%d not suppored!!\n ", CAM_MODE);
                 break;
             }
 
-            if (CAM_MODE == VR_1080P30 || CAM_MODE == VR_1080P24)
+            if (CAM_MODE == VR_1080P30)
                 fhd_req = 1;
-            else if (cam_mode_last == VR_1080P30 || cam_mode_last == VR_1080P24)
+            else if (cam_mode_last == VR_1080P30)
                 fhd_req = -1;
             dvr_update_vi_conf(CAM_MODE);
             system_script(REC_STOP_LIVE);
@@ -929,14 +966,16 @@ int AV_in_detect() // return = 1: vtmg to V536 changed
 
         if (det && det_cnt == AV_DET_SWITCH_CNT) {
             g_hw_stat.av_pal_w = g_hw_stat.av_pal_w ? 0 : 1;
+            // Track the new standard for consumers like dvr_update_vi_conf
+            // (records at 50 vs 60 fps based on this).
+            g_hw_stat.av_pal[g_hw_stat.is_av_in] = g_hw_stat.av_pal_w;
 
+            // AV_Mode_Switch_fpga() writes FPGA reg 0x80 (0x10 PAL / 0x00
+            // NTSC) from the new standard; the old re-write here keyed off
+            // av_pal[is_av_in], which live switches never updated, so it
+            // could clobber the fresh value with a stale one.
             TP2825_Switch_Mode(g_hw_stat.av_pal_w);
             AV_Mode_Switch(g_hw_stat.av_pal_w);
-
-            if (g_hw_stat.av_pal[g_hw_stat.is_av_in])
-                I2C_Write(ADDR_FPGA, 0x80, 0x10);
-            else
-                I2C_Write(ADDR_FPGA, 0x80, 0x00);
 
             g_hw_stat.av_valid[g_hw_stat.is_av_in] = 0;
             ret = 1;
@@ -1208,14 +1247,22 @@ void Analog_Module_Power(bool ForceSet) {
     if (getHwRevision() >= HW_REV_2) {
         static bool Analog_Module_Power_State = 0;
         static bool Analog_Module_Power_State_Last = 0;
-        if (g_setting.power.power_ana == 0) {
+        // Power state 0 = expansion module ON, 1 = OFF (see DM5680_ExternalAnalog_Power).
+        // Both modes require Expansion to be selected; with Built-in selected the
+        // internal rtc6715 is used instead, so the expansion module stays off.
+        // Dual (auto_protocol_detect) always uses the Built-in receiver, so the
+        // expansion module stays off there too regardless of the setting.
+        if (g_setting.source.analog_module != SETTING_SOURCES_ANALOG_MODULE_EXTERNAL ||
+            g_setting.source.auto_protocol_detect) {
+            Analog_Module_Power_State = 1;
+        } else if (g_setting.power.power_ana == 0) {
+            // "On": power the expansion module as soon as Expansion is selected
+            // and keep it powered regardless of source (warm for fast re-entry).
             Analog_Module_Power_State = 0;
         } else {
-            if (g_source_info.source != SOURCE_AV_MODULE) {
-                Analog_Module_Power_State = 1;
-            } else {
-                Analog_Module_Power_State = 0;
-            }
+            // "Auto": power the expansion module only while Analog is the active
+            // source; power it off on other sources (HDZero/HDMI).
+            Analog_Module_Power_State = (g_source_info.source == SOURCE_AV_MODULE) ? 0 : 1;
         }
         if ((Analog_Module_Power_State_Last != Analog_Module_Power_State) || (ForceSet == 1)) {
             Analog_Module_Power_State_Last = Analog_Module_Power_State;
@@ -1238,23 +1285,24 @@ int Get_VideoLatancy_status() // ret: 0=unlocked, 1=locked
 
 int Get_HAN_status() // ret: 0=error; 1=ok
 {
-    uint8_t r18 = 0;
-    uint8_t r19 = 0;
+    uint8_t rdat;
+
+    system_exec("aww 0x0300b340 0x00000008");
 
     I2C_Write(ADDR_FPGA, 0x81, 0x01);
-    sleep(1);
 
-    r18 = I2C_Read(ADDR_FPGA, 0x18);
-    r19 = I2C_Read(ADDR_FPGA, 0x19);
+    usleep(10000);
 
-    if (r19 == 0x1C && r18 >= 0xF0 && r18 <= 0xF6)
-        r19 = 1;
+    rdat = I2C_Read(ADDR_FPGA, 0x18);
+
+    if (rdat >= 0xE4 && rdat <= 0xE7)
+        rdat = 1;
     else
-        r19 = 0;
+        rdat = 0;
 
     I2C_Write(ADDR_FPGA, 0x81, 0x00);
 
-    return r19;
+    return rdat;
 }
 
 #endif

@@ -22,6 +22,7 @@
 #include "core/dvr.h"
 #include "core/elrs.h"
 #include "core/msp_displayport.h"
+#include "core/scan_core.h"
 #include "core/settings.h"
 #include "driver/dm5680.h"
 #include "driver/fans.h"
@@ -149,6 +150,9 @@ static uint32_t osdFont_fhd[OSD_VNUM][OSD_HNUM][OSD_HEIGHT_FHD][OSD_WIDTH_FHD]; 
 static osd_font_t osd_font_hd;
 static osd_font_t osd_font_fhd;
 static lv_obj_t *analog_rssi_bar;
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+bool osd_element_preview_analog = false;
+#endif
 
 void osd_llock_show(bool bShow) {
     char buf[128];
@@ -198,7 +202,17 @@ void osd_battery_low_show() {
         return;
     }
 
-    if (battery_is_low() && g_setting.osd.element[OSD_GOGGLE_BATTERY_LOW].show) {
+    bool show_gif;
+    bool blink = false;
+    if (g_setting.power.warning_type == SETTING_POWER_WARNING_TYPE_GRADUAL) {
+        battery_warn_level_t lvl = battery_warn_level();
+        show_gif = lvl >= BATTERY_WARN_SLOW;
+        // blink at the rapid/critical stages to mirror the menu battery icon (400 ms phase)
+        blink = (lvl >= BATTERY_WARN_RAPID) && ((lv_tick_get() / 400) % 2);
+    } else
+        show_gif = battery_is_low();
+
+    if (show_gif && !blink && g_setting.osd.element[OSD_GOGGLE_BATTERY_LOW].show) {
         osd_resource_path(buf, "%s", is_fhd, lowBattery_gif);
         lv_gif_set_src(g_osd_hdzero.battery_low[is_fhd], buf);
         lv_obj_clear_flag(g_osd_hdzero.battery_low[is_fhd], LV_OBJ_FLAG_HIDDEN);
@@ -207,7 +221,13 @@ void osd_battery_low_show() {
 }
 
 void osd_battery_voltage_show(bool bShow) {
-    if (!bShow || !g_setting.osd.element[OSD_GOGGLE_BATTERY_VOLTAGE].show) {
+    const bool is_gradual = (g_setting.power.warning_type == SETTING_POWER_WARNING_TYPE_GRADUAL);
+    const battery_warn_level_t lvl = is_gradual ? battery_warn_level() : BATTERY_WARN_NONE;
+    // The critical stage flashes the voltage and overrides a center-press OSD-off
+    // (is_visible) so a dying pack still warns visually; it never overrides the
+    // per-element OSD show setting.
+    if (!g_setting.osd.element[OSD_GOGGLE_BATTERY_VOLTAGE].show ||
+        (!bShow && lvl != BATTERY_WARN_CRITICAL)) {
         lv_obj_add_flag(g_osd_hdzero.battery_voltage[is_fhd], LV_OBJ_FLAG_HIDDEN);
         return;
     }
@@ -216,12 +236,30 @@ void osd_battery_voltage_show(bool bShow) {
     battery_get_voltage_str(buf);
     lv_label_set_text(g_osd_hdzero.battery_voltage[is_fhd], buf);
 
-    if (battery_is_low())
+    bool crit_blink = false;
+    if (is_gradual) {
+        if (lvl == BATTERY_WARN_SUBTLE)
+            lv_obj_set_style_text_color(g_osd_hdzero.battery_voltage[is_fhd], lv_color_make(255, 191, 0), 0); // amber
+        else if (lvl == BATTERY_WARN_SLOW)
+            lv_obj_set_style_text_color(g_osd_hdzero.battery_voltage[is_fhd], lv_color_make(255, 128, 0), 0); // orange
+        else if (lvl == BATTERY_WARN_RAPID)
+            lv_obj_set_style_text_color(g_osd_hdzero.battery_voltage[is_fhd], lv_color_make(255, 0, 0), 0); // red
+        else if (lvl == BATTERY_WARN_CRITICAL)
+            lv_obj_set_style_text_color(g_osd_hdzero.battery_voltage[is_fhd], lv_color_make(220, 0, 0), 0); // dark red
+        else
+            lv_obj_set_style_text_color(g_osd_hdzero.battery_voltage[is_fhd], lv_color_make(255, 255, 255), 0);
+        // critical blinks the voltage text to mirror the menu (400 ms phase)
+        crit_blink = (lvl == BATTERY_WARN_CRITICAL) && ((lv_tick_get() / 400) % 2);
+    } else if (battery_is_low()) {
         lv_obj_set_style_text_color(g_osd_hdzero.battery_voltage[is_fhd], lv_color_make(255, 0, 0), 0);
-    else
+    } else {
         lv_obj_set_style_text_color(g_osd_hdzero.battery_voltage[is_fhd], lv_color_make(255, 255, 255), 0);
+    }
 
-    lv_obj_clear_flag(g_osd_hdzero.battery_voltage[is_fhd], LV_OBJ_FLAG_HIDDEN);
+    if (crit_blink)
+        lv_obj_add_flag(g_osd_hdzero.battery_voltage[is_fhd], LV_OBJ_FLAG_HIDDEN);
+    else
+        lv_obj_clear_flag(g_osd_hdzero.battery_voltage[is_fhd], LV_OBJ_FLAG_HIDDEN);
 }
 
 void osd_clock_date_show(bool bShow) {
@@ -305,9 +343,9 @@ void osd_vlq_show(bool bShow) {
 
 void osd_analog_rssi_update_location() {
     if (g_setting.osd.embedded_mode == EMBEDDED_4x3)
-        lv_obj_set_pos(analog_rssi_bar, g_setting.osd.element[OSD_GOGGLE_ANT0].position.mode_4_3.x, g_setting.osd.element[OSD_GOGGLE_ANT0].position.mode_4_3.y + 14);
+        lv_obj_set_pos(analog_rssi_bar, g_setting.osd.element[OSD_GOGGLE_ANALOG_RSSI].position.mode_4_3.x, g_setting.osd.element[OSD_GOGGLE_ANALOG_RSSI].position.mode_4_3.y);
     else
-        lv_obj_set_pos(analog_rssi_bar, g_setting.osd.element[OSD_GOGGLE_ANT0].position.mode_16_9.x, g_setting.osd.element[OSD_GOGGLE_ANT0].position.mode_16_9.y + 14);
+        lv_obj_set_pos(analog_rssi_bar, g_setting.osd.element[OSD_GOGGLE_ANALOG_RSSI].position.mode_16_9.x, g_setting.osd.element[OSD_GOGGLE_ANALOG_RSSI].position.mode_16_9.y);
 }
 
 void osd_analog_rssi_create() {
@@ -337,7 +375,7 @@ void osd_analog_rssi_show(bool bShow) {
     char buf[128];
     // static uint8_t cnt = 0;
 
-    if (!bShow) {
+    if (!bShow || !g_setting.osd.element[OSD_GOGGLE_ANALOG_RSSI].show) {
         lv_obj_add_flag(analog_rssi_bar, LV_OBJ_FLAG_HIDDEN);
         return;
     }
@@ -368,6 +406,8 @@ void osd_analog_rssi_show(bool bShow) {
 //  = 0x00 | Channel Show Time
 uint8_t channel_osd_mode;
 uint8_t channel_osd_sent; // countdown: show "VTX SENT" beside the channel banner
+uint8_t channel_osd_preview_proto = 0;
+uint8_t channel_osd_preview_band = 0xFF;
 
 char *channel2str(uint8_t is_hdzero, uint8_t is_lowband, uint8_t channel) // channel=[1:18]
 {
@@ -385,13 +425,13 @@ char *channel2str(uint8_t is_hdzero, uint8_t is_lowband, uint8_t channel) // cha
         "L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"};
 
     if (is_hdzero) {
-        // Bound by the row being named, not HDZERO_CHANNEL_NUM: that macro
-        // follows the currently saved band, so with the goggles parked on
-        // Lowband it is 8 and raceband names 9-12 (E1/F1/F2/F4) would all
-        // fall back to "R1" - the all-band dial preview showed the F band
-        // as a run of R1s.
-        uint8_t const num = is_lowband ? 8 : BASE_CH_NUM;
-        if ((channel > 0) && (channel <= num))
+        // Bound by the requested band, not the global setting: Lowband has 8
+        // named channels (L1-L8), Raceband has BASE_CH_NUM (R1-R8,E1,F1,F2,F4).
+        // Using the passed is_lowband lets cross-band previews (BoxPro dial)
+        // format correctly even when the live band differs. For callers that
+        // pass the current band this is identical to the old HDZERO_CHANNEL_NUM.
+        uint8_t maxch = is_lowband ? 8 : BASE_CH_NUM;
+        if ((channel > 0) && (channel <= maxch))
             return hdzero_channel_name[is_lowband][channel - 1];
         else
             return hdzero_channel_name[is_lowband][0];
@@ -400,22 +440,83 @@ char *channel2str(uint8_t is_hdzero, uint8_t is_lowband, uint8_t channel) // cha
     }
 }
 
+char *channel2str_tagged(int protocol, uint8_t channel_index) {
+    static char buf[16];
+    char *base;
+    if (protocol == 1 /* PROTOCOL_HDZ */) {
+        uint8_t band = g_setting.source.hdzero_band;
+        base = channel2str(1, band, channel_index);
+        // "Dual" when this frequency also carries an analog channel (e.g.
+        // "R1/Dual"); plain "HDZ" for HDZ-only frequencies (Lowband).
+        const char *tag = scan_hdz_is_dual((int8_t)band, (int8_t)channel_index - 1)
+                              ? "Dual" : "HDZ";
+        snprintf(buf, sizeof(buf), "%s/%s", base, tag);
+    } else if (protocol == 2 /* PROTOCOL_ANALOG */) {
+        base = channel2str(0, 0, channel_index);
+        const char *tag = scan_analog_is_dual((int8_t)channel_index - 1)
+                              ? "Dual" : "ANA";
+        snprintf(buf, sizeof(buf), "%s/%s", base, tag);
+    } else {
+        snprintf(buf, sizeof(buf), "----");
+    }
+    return buf;
+}
+
+// Set while an auto-detect probe / Auto-BW settle is in flight
+// (osd_detecting_show(true)).
+static bool osd_detecting = false;
+
 void osd_channel_show(bool bShow) {
     uint8_t ch;
     lv_color_t color;
     char buf[32];
 
+    // An auto-detect probe is in flight: replace the channel tag with a
+    // "Detecting..." status in the same style as the red "To R1/Dual?"
+    // preview, and keep it up until osd_detecting_show(false) drops the flag.
+    if (osd_detecting) {
+        lv_label_set_text(g_osd_hdzero.channel[is_fhd], "  Detecting...  ");
+        lv_obj_set_style_text_color(g_osd_hdzero.channel[is_fhd], lv_color_make(0xFF, 0x20, 0x20), 0);
+        lv_obj_set_style_bg_opa(g_osd_hdzero.channel[is_fhd], LV_OPA_100, 0);
+        lv_obj_clear_flag(g_osd_hdzero.channel[is_fhd], LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
     if (channel_osd_mode & 0x80) {
         uint8_t lowband = g_setting.source.hdzero_band;
         ch = channel_osd_mode & 0x7F;
-        if (g_source_info.source == SOURCE_HDZERO && g_setting.source.dial_lowband) {
-            // all-band dial scroll: 1..12 raceband, 13..20 lowband
-            lowband = ch > BASE_CH_NUM;
-            if (lowband)
-                ch -= BASE_CH_NUM;
-        }
         color = lv_color_make(0xFF, 0x20, 0x20);
-        snprintf(buf, sizeof(buf), "  To %s?  ", channel2str(g_source_info.source == SOURCE_HDZERO, lowband, ch));
+        // For auto-detect previews, channel_osd_preview_proto overrides the
+        // source-based namespace so cross-protocol entries still render text.
+        // Tag the preview with /HDZ or /ANA so the user can tell which
+        // protocol they're about to switch to.
+        bool preview_is_hdz;
+        if (channel_osd_preview_proto == 1) {
+            preview_is_hdz = true;
+        } else if (channel_osd_preview_proto == 2) {
+            preview_is_hdz = false;
+        } else if (channel_osd_preview_proto == 3) {
+            preview_is_hdz = true; // Dual: HDZ-named (same name in both)
+        } else {
+            preview_is_hdz = (g_source_info.source == SOURCE_HDZERO);
+        }
+        // Fall back to the band derived above, not the saved setting: with the
+        // all-band dial the previewed channel may be in the other band, and
+        // naming it from g_setting.source.hdzero_band showed the F band as a
+        // run of R1s. Without the all-band dial the two are identical.
+        uint8_t preview_band = (channel_osd_preview_band == 0xFF)
+                                   ? lowband
+                                   : channel_osd_preview_band;
+        if (channel_osd_preview_proto != 0) {
+            const char *tag = (channel_osd_preview_proto == 3)
+                                  ? "Dual"
+                                  : (preview_is_hdz ? "HDZ" : "ANA");
+            snprintf(buf, sizeof(buf), "  To %s/%s?  ",
+                     channel2str(preview_is_hdz, preview_band, ch), tag);
+        } else {
+            snprintf(buf, sizeof(buf), "  To %s?  ",
+                     channel2str(preview_is_hdz, preview_band, ch));
+        }
         lv_obj_set_style_bg_opa(g_osd_hdzero.channel[is_fhd], LV_OPA_100, 0);
     } else {
         if (g_source_info.source == SOURCE_HDZERO) {
@@ -458,6 +559,24 @@ void osd_channel_show(bool bShow) {
     } else {
         lv_obj_add_flag(g_osd_hdzero.vtx_sent[is_fhd], LV_OBJ_FLAG_HIDDEN);
     }
+}
+
+bool osd_is_detecting(void) {
+    return osd_detecting;
+}
+
+// Tag the channel OSD element "Detecting..." (see osd_channel_show) while an
+// auto-detect probe or Auto-BW settle is in flight, and disable dial channel
+// selection (tune_channel checks osd_is_detecting). Paints synchronously
+// (lv_refr_now) so the tag shows BEFORE the caller's blocking open/probe. The
+// bw-reacquire watchdog calls this from a background thread, but always while
+// holding lvgl_mutex. (There used to be a fullscreen black mask here hiding
+// the baseband reset's green flash; it could not reliably occlude the live
+// plane and is gone -- the tag alone explains the flash.)
+void osd_detecting_show(bool on) {
+    osd_detecting = on;
+    osd_channel_show(true); // repaint the channel tag for the detecting state
+    lv_refr_now(NULL);
 }
 
 static void osd_object_set_pos(uint8_t fhd, lv_obj_t *obj, setting_osd_goggle_element_positions_t *pos) {
@@ -650,6 +769,26 @@ void osd_show_all_elements() {
     else
         lv_obj_add_flag(g_osd_hdzero.ant3[is_fhd], LV_OBJ_FLAG_HIDDEN);
 
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+    if (osd_element_preview_analog) {
+        // analog source: HDZero-only elements are not drawn
+        lv_obj_add_flag(g_osd_hdzero.vtx_temp[is_fhd], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(g_osd_hdzero.vlq[is_fhd], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(g_osd_hdzero.ant0[is_fhd], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(g_osd_hdzero.ant1[is_fhd], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(g_osd_hdzero.ant2[is_fhd], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(g_osd_hdzero.ant3[is_fhd], LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if (osd_element_preview_analog && g_setting.osd.element[OSD_GOGGLE_ANALOG_RSSI].show) {
+        // dummy value so the bar is visible while positioning
+        lv_bar_set_value(analog_rssi_bar, 75, LV_ANIM_OFF);
+        lv_obj_clear_flag(analog_rssi_bar, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(analog_rssi_bar, LV_OBJ_FLAG_HIDDEN);
+    }
+#endif
+
     if (!g_setting.storage.selftest)
         return;
 
@@ -778,7 +917,14 @@ void osd_hdzero_update(void) {
     osd_vlq_show(showRXOSD && source_is_hdzero);
 
 #if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
-    osd_analog_rssi_show(showRXOSD && source_is_analog);
+    // The RSSI bar reflects the Built-in receiver (rtc6715.rssi); it is
+    // meaningless for the Expansion module (whose RSSI we don't read), so hide
+    // it unless the Built-in module is the active analog receiver. Dual
+    // (auto_protocol_detect) always uses the Built-in receiver, so show it
+    // there too.
+    osd_analog_rssi_show(showRXOSD && source_is_analog &&
+                         (g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_INTERNAL ||
+                          g_setting.source.auto_protocol_detect));
 #elif defined(HDZGOGGLE)
 
 #endif

@@ -14,6 +14,7 @@
 #include "driver/screen.h"
 #include "lang/language.h"
 #include "ui/page_analog_rssi.h"
+#include "ui/page_audio.h"
 #include "ui/page_autoscan.h"
 #include "ui/page_clock.h"
 #include "ui/page_common.h"
@@ -49,11 +50,11 @@ static lv_obj_t *root_page;
  * To contain all menu pages.
  */
 
-#define PAGE_PACK_MAX_NUM 19
+#define PAGE_PACK_MAX_NUM 20
 
 static page_pack_t *page_packs[PAGE_PACK_MAX_NUM];
 static size_t page_packs_count = 0;
-static page_pack_t *post_bootup_actions[18];
+static page_pack_t *post_bootup_actions[PAGE_PACK_MAX_NUM];
 static size_t post_bootup_actions_count = 0;
 static bool bootup_actions_fired = false;
 
@@ -166,6 +167,16 @@ void submenu_roller_no_selection_change(uint8_t key) {
     set_select_item(&pp->p_arr, pp->p_arr.cur);
 }
 
+bool submenu_back() {
+    page_pack_t *pp = find_pp(lv_menu_get_cur_main_page(menu));
+    if (pp && pp->on_back && pp->on_back()) {
+        // Page absorbed the back gesture; stay on the page.
+        return true;
+    }
+    submenu_exit();
+    return false;
+}
+
 void submenu_exit() {
     LOGI("submenu_exit");
     app_state_push(APP_STATE_MAINMENU);
@@ -220,7 +231,12 @@ void menu_nav(uint8_t key) {
         if (selected >= page_packs_count)
             selected -= page_packs_count;
     }
-    lv_event_send(lv_obj_get_child(lv_obj_get_child(lv_menu_get_cur_sidebar_page(menu), 0), selected), LV_EVENT_CLICKED, NULL);
+    lv_obj_t *entry = lv_obj_get_child(lv_obj_get_child(lv_menu_get_cur_sidebar_page(menu), 0), selected);
+    lv_event_send(entry, LV_EVENT_CLICKED, NULL);
+    // The sidebar holds more entries than fit the BoxPro screen; keep the
+    // selected entry visible (the sidebar is scrollable but nothing else
+    // scrolls it).
+    lv_obj_scroll_to_view(entry, LV_ANIM_ON);
 }
 
 static void menu_reinit(void) {
@@ -231,7 +247,7 @@ static void menu_reinit(void) {
         return;
     }
 
-    if ((pp == &pp_scannow)) {
+    if (pp == &pp_scannow) {
         scan_reinit();
     }
 
@@ -307,6 +323,7 @@ void main_menu_init(void) {
     page_packs[page_packs_count++] = &pp_power;
     page_packs[page_packs_count++] = &pp_fans;
     page_packs[page_packs_count++] = &pp_record;
+    page_packs[page_packs_count++] = &pp_audio;
     page_packs[page_packs_count++] = &pp_autoscan;
     if (g_setting.has_all_features) {
         page_packs[page_packs_count++] = &pp_elrs;
@@ -337,7 +354,6 @@ void main_menu_init(void) {
     root_page = lv_menu_page_create(menu, "aaa");
 
     lv_obj_t *section = lv_menu_section_create(root_page);
-    lv_obj_clear_flag(section, LV_OBJ_FLAG_SCROLLABLE);
 
     for (uint32_t i = 0; i < page_packs_count; i++) {
         main_menu_create_entry(menu, section, page_packs[i]);
@@ -361,7 +377,12 @@ void main_menu_init(void) {
     lv_menu_set_sidebar_page(menu, root_page);
     lv_event_send(lv_obj_get_child(lv_obj_get_child(lv_menu_get_cur_sidebar_page(menu), 0), 0), LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(lv_menu_get_sidebar_header(menu), LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(lv_menu_get_cur_sidebar_page(menu), LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(lv_menu_get_cur_sidebar_page(menu), LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(root_page, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(section, LV_OBJ_FLAG_SCROLLABLE);
+    // Let the scroll run a little past the last entry so its descenders
+    // (the "p" in "Sleep Now") aren't clipped at the bottom edge.
+    lv_obj_set_style_pad_bottom(section, 16, 0);
 
     progress_bar.bar = lv_bar_create(lv_scr_act());
     lv_obj_set_size(progress_bar.bar, UI_MENU_PROG_BAR_SIZE);
@@ -407,6 +428,7 @@ void main_menu_update() {
 
 void progress_bar_update() {
     static uint8_t state = 0; // 0=idle, 1= in process
+    static int frac = 0;      // tenths-of-a-percent carry for the fill rate
 
     switch (state) {
     case 0:
@@ -415,6 +437,7 @@ void progress_bar_update() {
             lv_obj_add_flag(menu, LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(progress_bar.bar, LV_OBJ_FLAG_HIDDEN);
             progress_bar.val = 0;
+            frac = 0;
             // LOGI("Progress bar start");
         }
         break;
@@ -425,14 +448,24 @@ void progress_bar_update() {
             lv_obj_clear_flag(menu, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(progress_bar.bar, LV_OBJ_FLAG_HIDDEN);
             progress_bar.val = 0;
+            progress_bar.step = 0; // back to default fill rate for the next use
+            frac = 0;
             // LOGI("Progress bar end");
         }
         break;
     }
 
     if (state == 1) {
+        // Fill rate is per-use: the caller may slow it (progress_bar.step) to
+        // track a longer operation. Units are tenths of a percent per ~100ms
+        // tick (so sub-percent rates are possible); 0 = the normal rate (40).
+        int step = progress_bar.step ? progress_bar.step : 40;
+        frac += step;
         if (progress_bar.val < 100)
-            progress_bar.val += 4;
+            progress_bar.val += frac / 10;
+        frac %= 10;
+        if (progress_bar.val > 100)
+            progress_bar.val = 100;
         lv_bar_set_value(progress_bar.bar, progress_bar.val, LV_ANIM_OFF);
         lv_timer_handler();
     }

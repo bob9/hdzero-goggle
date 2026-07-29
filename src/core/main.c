@@ -5,6 +5,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <log/log.h>
@@ -25,6 +26,7 @@ SDL_mutex *global_sdl_mutex;
 #include "core/ht.h"
 #include "core/input_device.h"
 #include "core/osd.h"
+#include "core/scan_core.h"
 #include "core/self_test.h"
 #include "core/settings.h"
 #include "core/sleep_mode.h"
@@ -56,7 +58,18 @@ SDL_mutex *global_sdl_mutex;
 
 int gif_cnt = 0;
 
+// See the ELRS backpack readiness gate in main()'s loop.
+#define ELRS_ENABLE_MIN_DELAY_SEC 5
+#define ELRS_ENABLE_MAX_DELAY_SEC 15
+
+// Set for the lifetime of the boot-time auto-scan menu loop below, so the
+// ELRS backpack readiness gate (main()) can wait it out instead of firing
+// on a fixed delay while the scan is still actively driving the UI/app
+// state.
+static volatile bool g_boot_autoscan_running = false;
+
 static void *thread_autoscan(void *ptr) {
+    g_boot_autoscan_running = true;
     for (;;) {
         pthread_mutex_lock(&lvgl_mutex);
         main_menu_show(true);
@@ -74,8 +87,34 @@ static void *thread_autoscan(void *ptr) {
     }
 
 a_exit:
+    g_boot_autoscan_running = false;
     pthread_exit(NULL);
     return NULL;
+}
+
+// In normal operation the version thread animates progress_bar (its 100ms
+// loop calls progress_bar_update, page_version.c), but start_running executes
+// before create_threads -- so a direct boot entry showed a frozen menu for
+// the 5-10s the source bring-up takes. Tick the bar from this short-lived
+// thread so Load from Boot shows the same loading animation (and the same
+// per-source/Auto-BW fill rates) as the equivalent Source-page pick; hand
+// off as soon as the main loop starts.
+static void *thread_boot_progress(void *ptr) {
+    while (progress_bar.start && !g_init_done) {
+        progress_bar_update();
+        usleep(100000);
+    }
+    if (!g_init_done)
+        progress_bar_update(); // run the bar's end-of-use cleanup tick
+    pthread_exit(NULL);
+    return NULL;
+}
+
+static void boot_progress_start(void) {
+    pthread_t pid;
+    progress_bar.start = 1;
+    if (pthread_create(&pid, NULL, thread_boot_progress, NULL) == 0)
+        pthread_detach(pid);
 }
 
 void start_running(void) {
@@ -85,19 +124,67 @@ void start_running(void) {
     else
         source = g_setting.autoscan.source;
 
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+    // Booting into an explicit source must not inherit Dual mode from the
+    // previous session (auto_protocol_detect persists in setting.ini): the
+    // Source page's direct picks disable it, so the boot equivalents do too.
+    // Without this, Default=HDZero booted with the Dual dial/channel
+    // behavior after a Dual session.
+    if (source != SETTING_AUTOSCAN_SOURCE_AUTO_DETECT &&
+        g_setting.source.auto_protocol_detect) {
+        g_setting.source.auto_protocol_detect = false;
+        settings_put_bool("source", "auto_protocol_detect", false);
+    }
+#endif
+
+    // Auto Scan=On + Load from Boot=No: run a Scan Now sweep for the default
+    // source's protocol at boot instead of entering the source directly
+    // (HDZero's historical behavior, now offered for Analog and Dual too).
+    // AV In and HDMI In always load directly -- there is nothing to scan --
+    // and the G1's external analog module cannot be scanned either. A dial
+    // up/down during initialization (g_init_done) skips the scan, as before.
+    bool boot_scan = (g_setting.autoscan.status == SETTING_AUTOSCAN_STATUS_ON) &&
+                     !g_setting.autoscan.load_from_boot && (g_init_done == 0);
+
     if (source == SETTING_AUTOSCAN_SOURCE_HDZERO) { // HDZero
         g_source_info.source = SOURCE_HDZERO;
-        // go autoscan only if no dial up/down during initialization
-        if ((g_setting.autoscan.status == SETTING_AUTOSCAN_STATUS_ON) && (g_init_done == 0)) {
+        if (boot_scan) {
             pthread_t pid;
             g_autoscan_exit = false;
+            page_scannow_set_boot_scan_mode(0); // SCAN_MODE_HDZERO
             pthread_create(&pid, NULL, thread_autoscan, NULL);
-        } else if (g_setting.autoscan.status == SETTING_AUTOSCAN_STATUS_LAST) {
+        } else if (g_setting.autoscan.status == SETTING_AUTOSCAN_STATUS_LAST ||
+                   (g_setting.autoscan.status == SETTING_AUTOSCAN_STATUS_ON &&
+                    g_setting.autoscan.load_from_boot)) {
             app_state_push(APP_STATE_VIDEO);
+            boot_progress_start(); // same loading bar as a Source-page pick
             app_switch_to_hdzero(true);
         } else { // auto scan disabled, go to go directly to last saved channel
             app_state_push(APP_STATE_MAINMENU);
         }
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+    } else if (source == SETTING_AUTOSCAN_SOURCE_AUTO_DETECT) {
+        if (boot_scan) {
+            pthread_t pid;
+            g_autoscan_exit = false;
+            page_scannow_set_boot_scan_mode(2); // SCAN_MODE_AUTO (Dual)
+            pthread_create(&pid, NULL, thread_autoscan, NULL);
+        } else {
+            // Probes both protocols at the current channel and enters video
+            // on whichever responds; pushes APP_STATE_VIDEO and sets
+            // g_source_info.source itself. It sets the bar's per-Auto-BW fill
+            // rate; the ticker just needs to be running before it blocks.
+            boot_progress_start();
+            page_source_select_auto_detect();
+        }
+    } else if (source == SETTING_AUTOSCAN_SOURCE_AV_MODULE && boot_scan) {
+        // Boot scan on the built-in analog receiver. (The G1 has no built-in
+        // analog, so its AV Module default keeps the direct entry below.)
+        pthread_t pid;
+        g_autoscan_exit = false;
+        page_scannow_set_boot_scan_mode(1); // SCAN_MODE_ANALOG
+        pthread_create(&pid, NULL, thread_autoscan, NULL);
+#endif
     } else {
         app_state_push(APP_STATE_VIDEO);
         if (source == SETTING_AUTOSCAN_SOURCE_AV_MODULE) { // AV Module
@@ -121,8 +208,9 @@ void start_running(void) {
         }
     }
 
-    if (g_setting.elrs.enable)
-        enable_esp32();
+    // ELRS backpack is brought up later, once the goggle has finished booting
+    // (see deferred enable in main()). Enabling it here would land mid HDZero
+    // bring-up and wedge the ESP.
 }
 
 static void device_init(void) {
@@ -159,6 +247,9 @@ int main(int argc, char *argv[]) {
     // 1. Recall configuration
     settings_init();
     settings_load();
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2) || defined(HDZGOGGLE)
+    scan_core_self_check();
+#endif
     language_init();
     pclk_phase_init();
 
@@ -219,6 +310,18 @@ int main(int argc, char *argv[]) {
 
     // 10. Execute main loop
     g_init_done = 1;
+
+    // Bring the ELRS backpack up once boot has genuinely settled, not just
+    // after a fixed delay: enabling it during the busy HDZero bring-up (or
+    // while the boot-time auto-scan menu loop is still actively driving the
+    // UI/app state) wedges the ESP. ELRS_ENABLE_MIN_DELAY_SEC gives the
+    // synchronous HDZero switch time to finish; ELRS_ENABLE_MAX_DELAY_SEC
+    // caps how long an idle boot-scan screen can hold the backpack off.
+    // (The analog path settles well before the floor, so it is unaffected.)
+    // A watchdog (elrs_watchdog_start) backstops whatever this gate misses.
+    time_t boot_time = time(NULL);
+    bool elrs_backpack_started = false;
+
     for (;;) {
         pthread_mutex_lock(&lvgl_mutex);
         main_menu_update();
@@ -232,6 +335,19 @@ int main(int argc, char *argv[]) {
         lv_timer_handler();
         source_status_timer();
         pthread_mutex_unlock(&lvgl_mutex);
+
+        if (!elrs_backpack_started) {
+            time_t elapsed = time(NULL) - boot_time;
+            bool settled = !g_boot_autoscan_running && elapsed >= ELRS_ENABLE_MIN_DELAY_SEC;
+            if (settled || elapsed >= ELRS_ENABLE_MAX_DELAY_SEC) {
+                elrs_backpack_started = true;
+                if (g_setting.elrs.enable) {
+                    enable_esp32();
+                    elrs_watchdog_start();
+                }
+            }
+        }
+
         usleep(5000);
         gif_cnt++;
     }

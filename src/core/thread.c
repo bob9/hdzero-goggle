@@ -6,11 +6,13 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/vfs.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <log/log.h>
 
 #include "core/app_state.h"
+#include "core/scan_core.h"
 #include "core/battery.h"
 #include "core/common.hh"
 #include "core/defines.h"
@@ -117,6 +119,7 @@ static void detect_sdcard(void) {
 #define SIGNAL_ACCQ_DURATION_THR 10
 static void check_source_signal(int vtmg_change) {
     static uint8_t cnt = 0;
+    static time_t signal_loss_at = 0; // 0 = no pending delayed stop
     uint8_t is_valid;
 
     // HDZero digital
@@ -153,6 +156,7 @@ static void check_source_signal(int vtmg_change) {
             LOGI("AV VTMG change");
             dvr_cmd(DVR_STOP);
             dvr_cmd(DVR_START);
+            signal_loss_at = 0;
         }
     }
 
@@ -162,6 +166,7 @@ static void check_source_signal(int vtmg_change) {
         dvr_cmd(DVR_STOP);
         system_script(REC_STOP_LIVE);
         cnt = 0;
+        signal_loss_at = 0;
     }
 
     // HDMI VTMG change -> Restart recording
@@ -169,20 +174,36 @@ static void check_source_signal(int vtmg_change) {
         LOGI("HDMI IN VTMG change");
         dvr_cmd(DVR_STOP);
         cnt = 0;
+        signal_loss_at = 0;
     }
 
     if (dvr_is_recording) { // in-recording
         if (!is_valid) {
-            cnt++;
+            if (cnt < SIGNAL_LOSS_DURATION_THR)
+                cnt++;
             if (cnt >= SIGNAL_LOSS_DURATION_THR) {
-                cnt = 0;
-                LOGI("Signal lost");
-                g_setting.ht.alarm_on_video = false;
-                dvr_cmd(DVR_STOP);
+                // debounce satisfied; optionally hold on for the user's grace
+                // period so a brief dropout doesn't split the recording.
+                // HDMI-in keeps its immediate-stop behavior.
+                uint8_t effective_delay = (g_source_info.source == SOURCE_HDMI_IN)
+                                              ? 0
+                                              : g_setting.record.stop_delay_seconds;
+                if (signal_loss_at == 0)
+                    signal_loss_at = time(NULL);
+                if (difftime(time(NULL), signal_loss_at) >= effective_delay) {
+                    cnt = 0;
+                    signal_loss_at = 0;
+                    LOGI("Signal lost");
+                    g_setting.ht.alarm_on_video = false;
+                    dvr_cmd(DVR_STOP);
+                }
             }
-        } else
+        } else {
             cnt = 0;
+            signal_loss_at = 0; // signal reacquired -- cancel any pending stop
+        }
     } else { // not in-recording
+        signal_loss_at = 0;
         if (is_valid) {
             cnt++;
             if (cnt >= SIGNAL_ACCQ_DURATION_THR) {
@@ -230,6 +251,19 @@ static void *thread_peripheral(void *ptr) {
             g_source_info.av_in_status = g_hw_stat.av_valid[1];
             g_source_info.av_bay_status = g_hw_stat.av_valid[0];
 
+#if defined(HDZGOGGLE)
+            // Auto NTSC/PAL (G1): AV_in_detect flags a format change instead of
+            // switching live (which tears). We're already in AV mode on the same
+            // input -- only the standard changed -- so run the light re-time
+            // (G2's inline switch plus the screen_vtmg_invalidate poke that G1's
+            // OLED needs to re-lock; see Source_AV_retime) instead of the full
+            // Source_AV rebuild.
+            if (g_hw_stat.av_reinit_req && g_hw_stat.source_mode == SOURCE_MODE_AV) {
+                g_hw_stat.av_reinit_req = 0;
+                Source_AV_retime();
+            }
+#endif
+
             // detect HDMI in
             record_vtmg_change |= HDMI_in_detect();
             g_source_info.hdmi_in_status = g_hw_stat.hdmiin_valid;
@@ -237,6 +271,13 @@ static void *thread_peripheral(void *ptr) {
             g_latency_locked = (bool)Get_VideoLatancy_status();
             check_source_signal(record_vtmg_change);
             record_vtmg_change = 0;
+
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2) || defined(HDZGOGGLE)
+            scan_core_hdz_bw_tick();
+#endif
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+            scan_core_idle_tick();
+#endif
         }
         j++;
         usleep(2000);

@@ -1,8 +1,11 @@
 #include "page_version.h"
 
+#include <ctype.h>
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <log/log.h>
@@ -186,6 +189,9 @@ static esp_loader_error_t flash_esp32_file(char *path, uint32_t offset) {
 }
 
 static esp_loader_error_t flash_esp32() {
+    // Keep the watchdog from "recovering" a chip that's intentionally
+    // offline for flashing (or freshly re-booted right after).
+    g_elrs_msp_busy_until = time(NULL) + 120;
     disable_esp32();
 
     esp_loader_connect_args_t config = ESP_LOADER_CONNECT_DEFAULT();
@@ -359,6 +365,9 @@ int generate_current_version(sys_version_t *sys_ver) {
     sys_ver->va = I2C_Read(ADDR_FPGA, 0xff);
     sys_ver->rx0 = rx_status[0].rx_ver;
     sys_ver->rx1 = rx_status[1].rx_ver;
+    sys_ver->app_major = 0;
+    sys_ver->app_minor = 0;
+    sys_ver->app_patch = 0;
     memset(sys_ver->commit, 0, sizeof(sys_ver->commit));
 
     FILE *fp = fopen("/mnt/app/version", "r");
@@ -366,41 +375,30 @@ int generate_current_version(sys_version_t *sys_ver) {
         return -1;
     }
 
-    // %9s to read max 9 chars and leave room for null terminator, since sys_ver->commit has length 10
-    fscanf(fp, "%hhd.%hhd.%hhd-%9s",
-           &sys_ver->app_major,
-           &sys_ver->app_minor,
-           &sys_ver->app_patch,
-           sys_ver->commit);
+    char app_version[32] = {0};
+    if (!fgets(app_version, sizeof(app_version), fp)) {
+        fclose(fp);
+        return -1;
+    }
     fclose(fp);
 
-    if (strlen(sys_ver->commit)) {
-        LOGI("app: %hhu.%hhu.%hhu-%s rx0: %u rx1: %u va: %u",
-             sys_ver->app_major,
-             sys_ver->app_minor,
-             sys_ver->app_patch,
-             sys_ver->commit,
-             sys_ver->rx0, sys_ver->rx1, sys_ver->va);
+    app_version[strcspn(app_version, "\r\n")] = '\0';
 
-        snprintf(sys_ver->current, CURRENT_VER_MAX, "app: %hhu.%hhu.%hhu-%s rx0: %u rx1: %u va: %u",
-                 sys_ver->app_major,
-                 sys_ver->app_minor,
-                 sys_ver->app_patch,
-                 sys_ver->commit,
-                 sys_ver->rx0, sys_ver->rx1, sys_ver->va);
-    } else {
-        LOGI("app: %hhu.%hhu.%hhu rx0: %u rx1: %u va: %u",
-             sys_ver->app_major,
-             sys_ver->app_minor,
-             sys_ver->app_patch,
-             sys_ver->rx0, sys_ver->rx1, sys_ver->va);
-
-        snprintf(sys_ver->current, CURRENT_VER_MAX, "app: %hhu.%hhu.%hhu rx0: %u rx1: %u va: %u",
-                 sys_ver->app_major,
-                 sys_ver->app_minor,
-                 sys_ver->app_patch,
-                 sys_ver->rx0, sys_ver->rx1, sys_ver->va);
+    const char *numeric_version = app_version;
+    while (*numeric_version && !isdigit((unsigned char)*numeric_version)) {
+        numeric_version++;
     }
+    sscanf(numeric_version, "%hhu.%hhu.%hhu",
+           &sys_ver->app_major,
+           &sys_ver->app_minor,
+           &sys_ver->app_patch);
+    LOGI("app: %s rx0: %u rx1: %u va: %u",
+         app_version,
+         sys_ver->rx0, sys_ver->rx1, sys_ver->va);
+
+    snprintf(sys_ver->current, CURRENT_VER_MAX, "app: %s rx0: %u rx1: %u va: %u",
+             app_version,
+             sys_ver->rx0, sys_ver->rx1, sys_ver->va);
 
     return 0;
 }
@@ -976,7 +974,6 @@ static void page_version_on_update(uint32_t delta_ms) {
 uint8_t command_monitor(char *cmd) {
     FILE *stream;
     char buf[128];
-    size_t rsize = 0;
     uint8_t ret;
 
     stream = popen(cmd, "r");
@@ -985,8 +982,12 @@ uint8_t command_monitor(char *cmd) {
 
     LOGI("---%s---", cmd);
     ret = 0;
-    do {
-        rsize = fread(buf, sizeof(char), sizeof(buf), stream);
+    // Read the script's output a line at a time. fgets always
+    // NUL-terminates and never splits a status token across reads, so the
+    // final "all done" is detected reliably. The old fixed-size fread()
+    // chopped output into 128-byte chunks and could straddle "all done"
+    // across a boundary, reporting FAILED on a successful update.
+    while (fgets(buf, sizeof(buf), stream)) {
         LOGI("%s", buf);
         if (strstr(buf, "all done")) {
             ret = 1;
@@ -998,7 +999,7 @@ uint8_t command_monitor(char *cmd) {
             ret = 3;
             break;
         }
-    } while (rsize == sizeof(buf));
+    }
     pclose(stream);
     LOGI("");
     return ret;
@@ -1028,6 +1029,7 @@ static void page_version_enter() {
 
     if (ROW_UPDATE_ESP32 > 0) {
         lv_label_set_text(label_esp, "");
+        g_elrs_msp_busy_until = time(NULL) + 6; // covers the ~5s version poll burst below
         msp_send_packet(MSP_GET_BP_VERSION, MSP_PACKET_COMMAND, 0, NULL);
         lv_timer_t *timer = lv_timer_create(elrs_version_timer, 250, NULL);
         lv_timer_set_repeat_count(timer, 20);

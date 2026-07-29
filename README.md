@@ -1,4 +1,11 @@
-# HDZero Goggle/BoxPro Firmware
+# ripples' Custom HDZero Goggles Firmware
+Since many of you have asked, if you'd like to support the work I'm doing here, you can send a donation here: https://www.paypal.com/paypalme/ripleyjb
+
+As a perk, your feature requests will get priority and I'll let you preview upcoming beta features if you'd like (there's some really cool stuff to come). I'll also have a special firmware version with some extra goodies as a thank you to those who donated $10 or more. Drop your Discord username/Github username in the donation description so I know who you are if you'd like access to priority feature requests, beta firmwares and the extra goodies firmware. It is not a requirement to donate. Firmware releases will continue to be free.
+
+If you'd like to request a feature you'd like me to add, send me a message in Discord, leave it in the #feature-suggestions channel on the HDZero Discord, or open an issue on here, and I'll get to it when I can. This is still a project I'm working on in my free time, so please set timeline expectations accordingly, but I should be faster than official firmware from the HDZ team.
+
+I hope you enjoy my custom firmware!
 
 ## Environment Setup
 
@@ -32,8 +39,8 @@ Compiling HDZero Goggles:
 ~/hdzero-goggle/build_goggle$ make clean all -j $(nproc)
 ```
 
-The firmware is generated as hdzero-goggle/build_goggle/out/HDZERO_GOGGLE-x.x.x.bin
-Where x.x.x is the OTA_VER.RX_VER.VA_VER
+The firmware is generated as hdzero-goggle/build_goggle/out/HDZERO_GOGGLE-77-206-1.1.2-ripples-<commit>.bin
+Tagged releases omit the commit suffix.
 
 Compiling HDZero BoxPro:
 ```
@@ -41,8 +48,8 @@ Compiling HDZero BoxPro:
 ~/hdzero-goggle/build_boxpro$ make clean all -j $(nproc)
 ```
 
-The firmware is generated as hdzero-goggle/build_boxpro/out/HDZERO_BOXPRO-x.x.x.bin
-Where x.x.x is the OTA_VER.RX_VER.VA_VER
+The firmware is generated as hdzero-goggle/build_boxpro/out/HDZERO_BOXPRO-77-211-1.1.2-ripples-<commit>.bin
+Tagged releases omit the commit suffix.
 
 ### Building the firmware using nix
 

@@ -37,6 +37,7 @@ static size_t stars_count = 0;
 static size_t stars_timestamps_s[MAX_STARS] = {
     0,
 };
+static lv_obj_t *play_error_label = NULL;
 
 // Display bring-up bench readout (see Display_UI_BenchNext). The label is
 // only readable when the recipe under test actually displays - which is
@@ -74,11 +75,14 @@ static lv_timer_t *bar_hide_timer = NULL;
 
 static void bar_hide_cb(lv_timer_t *timer) {
     (void)timer;
-    if (controller.enable)
+    if (controller.enable) {
+        controller.controls_visible = false;
         lv_obj_add_flag(controller.bar, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 static void bar_show(void) {
+    controller.controls_visible = true;
     lv_obj_clear_flag(controller.bar, LV_OBJ_FLAG_HIDDEN);
     if (bar_hide_timer)
         lv_timer_reset(bar_hide_timer);
@@ -136,6 +140,13 @@ static void update_mplayer() {
         lv_obj_add_flag(controller.bg, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(controller.bar, LV_OBJ_FLAG_HIDDEN);
     } else {
+        lv_obj_clear_flag(controller.bg, LV_OBJ_FLAG_HIDDEN);
+        if (!controller.controls_visible) {
+            lv_obj_add_flag(controller.bar, LV_OBJ_FLAG_HIDDEN);
+            return;
+        }
+
+        lv_obj_clear_flag(controller.bar, LV_OBJ_FLAG_HIDDEN);
         lv_img_set_src(controller._btn, controller.is_playing ? &img_Stop_0 : &img_Play_0);
         update_time_label(media != NULL);
     }
@@ -222,6 +233,7 @@ static void init_mplayer() {
     lv_obj_add_style(controller.bar, &style_bar, 0);
 
     controller.enable = true;
+    controller.controls_visible = true;
     controller.is_playing = true;
     controller.value = controller.range = 0;
 
@@ -376,7 +388,6 @@ void load_stars(char *fname) {
     }
 }
 
-static lv_obj_t *play_error_label = NULL;
 
 void media_init(char *fname) {
     media = media_instantiate(fname, notify_cb);

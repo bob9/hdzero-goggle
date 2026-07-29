@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <log/log.h>
@@ -28,6 +29,7 @@
 enum {
     POS_VTX,
     POS_VTX_CTRL,
+    POS_AUTO_SEND,
     POS_PWR,
     POS_WIFI,
     POS_BIND,
@@ -45,6 +47,7 @@ static lv_obj_t *cancel_label;
 static lv_obj_t *btn_vtx_send;
 static btn_group_t elrs_group;
 static btn_group_t vtx_ctrl_group;
+static btn_group_t auto_send_group;
 static bool binding = false;
 
 static void update_visibility() {
@@ -52,6 +55,13 @@ static void update_visibility() {
     const bool vtxSendAllowed = backpackIsActive && g_setting.elrs.vtx_send_enable;
 
     btn_group_enable(&vtx_ctrl_group, backpackIsActive);
+    // Auto Send only means anything while sending is permitted at all
+    btn_group_enable(&auto_send_group, vtxSendAllowed);
+    if (vtxSendAllowed) {
+        lv_obj_add_flag(pp_elrs.p_arr.panel[POS_AUTO_SEND], FLAG_SELECTABLE);
+    } else {
+        lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_AUTO_SEND], FLAG_SELECTABLE);
+    }
 
     // Send VTX is usable only when the backpack is on AND VTX Control
     // allows transmitting
@@ -118,6 +128,9 @@ static lv_obj_t *page_elrs_create(lv_obj_t *parent, panel_arr_t *arr) {
     snprintf(buf, sizeof(buf), "VTX %s", _lang("Control"));
     create_btn_group_item(&vtx_ctrl_group, cont, 2, buf, _lang("On"), _lang("Off"), "", "", POS_VTX_CTRL);
     btn_group_set_sel(&vtx_ctrl_group, !g_setting.elrs.vtx_send_enable);
+    snprintf(buf, sizeof(buf), "%s VTX", _lang("Auto Send"));
+    create_btn_group_item(&auto_send_group, cont, 2, buf, _lang("On"), _lang("Off"), "", "", POS_AUTO_SEND);
+    btn_group_set_sel(&auto_send_group, !g_setting.elrs.auto_send_vtx);
     btn_wifi = create_label_item(cont, "WiFi", 1, POS_WIFI, 1);
     label_wifi_status = create_label_item(cont, _lang("Click to start"), 2, POS_WIFI, 1);
     btn_bind = create_label_item(cont, _lang("Bind"), 1, POS_BIND, 1);
@@ -166,6 +179,7 @@ static void elrs_status_timer(struct _lv_timer_t *timer) {
 }
 
 static void request_uid() {
+    g_elrs_msp_busy_until = time(NULL) + 6; // covers the ~5s status poll burst below
     msp_send_packet(MSP_GET_BP_STATUS, MSP_PACKET_COMMAND, 0, NULL);
     lv_timer_t *timer = lv_timer_create(elrs_status_timer, 250, NULL);
     lv_timer_set_repeat_count(timer, 20);
@@ -212,10 +226,16 @@ static void page_elrs_on_click(uint8_t key, int sel) {
         g_setting.elrs.vtx_send_enable = btn_group_get_sel(&vtx_ctrl_group) == 0;
         settings_put_bool("elrs", "vtx_send_enable", g_setting.elrs.vtx_send_enable);
         update_visibility();
+    } else if (sel == POS_AUTO_SEND) // dial click sends too, not just a long press
+    {
+        btn_group_toggle_sel(&auto_send_group);
+        g_setting.elrs.auto_send_vtx = btn_group_get_sel(&auto_send_group) == 0;
+        settings_put_bool("elrs", "auto_send_vtx", g_setting.elrs.auto_send_vtx);
     } else if (sel == POS_WIFI) // start ESP Wifi
     {
         snprintf(buf, sizeof(buf), "%s...", _lang("Starting"));
         lv_label_set_text(label_wifi_status, buf);
+        g_elrs_msp_busy_until = time(NULL) + 2;
         msp_send_packet(MSP_SET_MODE, MSP_PACKET_COMMAND, 1, (uint8_t *)"W");
         lv_timer_handler();
         if (msp_await_resposne(MSP_SET_MODE, 1, (uint8_t *)"P", 1000) != AWAIT_SUCCESS) {
@@ -229,6 +249,7 @@ static void page_elrs_on_click(uint8_t key, int sel) {
     {
         snprintf(buf, sizeof(buf), "%s...", _lang("Starting"));
         lv_label_set_text(label_bind_status, buf);
+        g_elrs_msp_busy_until = time(NULL) + 125; // covers the start ack + up to 120s bind wait
         msp_send_packet(MSP_SET_MODE, MSP_PACKET_COMMAND, 1, (uint8_t *)"B");
         lv_timer_handler();
         if (msp_await_resposne(MSP_SET_MODE, 1, (uint8_t *)"P", 1000) != AWAIT_SUCCESS) {

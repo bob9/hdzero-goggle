@@ -29,6 +29,7 @@
 #include "core/app_state.h"
 #include "core/dvr.h"
 #include "core/elrs.h"
+#include "core/scan_core.h"
 #include "core/settings.h"
 #include "core/sleep_mode.h"
 #include "driver/beep.h"
@@ -67,16 +68,181 @@ static pthread_t input_device_pid;
 static int btn_value = 0;
 
 // action: 1 = tune up, 2 = tune down, 3 = confirm
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+// Set to 0 to restore the per-click bandwidth sweep in Auto BW (Both) mode:
+// slower (re-inits the DM6302 on each click) but identifies the locking
+// bandwidth up front. When 1, Both-mode clicks take the single-bandwidth fast
+// path and let the live bw-reacquire watchdog settle the bandwidth (tagged
+// "Detecting..." while it does). Revert by setting this back to 0.
+#define AUTODETECT_FAST_DIAL 1
+static int auto_detect_freq_idx = -1;
+#endif
+
+// Flat HDZ channel space: the band/channel split is purely a UI grouping over
+// a contiguous 20-channel hardware space (DM6302 indexes lowband as ch+12).
+// flat 0..11  -> Raceband ch 0..11 (R1-R8, E1, F1, F2, F4)
+// flat 12..19 -> Lowband  ch 0..7  (L1-L8)
+#define HDZ_FLAT_COUNT (BASE_CH_NUM + 8) // 20
+
+static void hdz_flat_to_band_ch(int flat, uint8_t *band, uint8_t *ch1) {
+    if (flat < 0) flat = 0;
+    if (flat >= HDZ_FLAT_COUNT) flat = HDZ_FLAT_COUNT - 1;
+    if (flat < BASE_CH_NUM) {
+        *band = 0;
+        *ch1 = (uint8_t)(flat + 1);
+    } else {
+        *band = 1;
+        *ch1 = (uint8_t)(flat - BASE_CH_NUM + 1);
+    }
+}
+
+static int hdz_band_ch_to_flat(uint8_t band, uint8_t ch1) {
+    int ch0 = (int)ch1 - 1;
+    if (ch0 < 0) ch0 = 0;
+    return (band == 1) ? (BASE_CH_NUM + ch0) : ch0;
+}
+
 void exit_tune_channel() {
     tune_state = 0;
     tune_timer = 0;
     channel_osd_mode = 0;
+    channel_osd_preview_proto = 0;
+    channel_osd_preview_band = 0xFF;
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+    auto_detect_freq_idx = -1;
+#endif
 }
+
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+// Returns the band-order navigation index (0..SCAN_BAND_ORDER_COUNT-1) of the
+// channel currently being viewed, so the dial resumes from the right position.
+static int find_freq_table_index(void) {
+    if (g_source_info.source == SOURCE_HDZERO) {
+        uint8_t ch = (g_setting.scan.channel - 1) & 0x7F;
+        int8_t  band = (int8_t)g_setting.source.hdzero_band;
+        for (int i = 0; i < SCAN_BAND_ORDER_COUNT; i++) {
+            const scan_freq_entry_t *e = scan_band_order_entry(i);
+            if (e && e->hdz_band == band && e->hdz_channel == (int8_t)ch)
+                return i;
+        }
+    } else if (g_source_info.source == SOURCE_AV_MODULE) {
+        // The analog channel index is already in band order (A,B,E,F,R,L).
+        int ch = (int)((g_setting.source.analog_channel - 1) & 0x7F);
+        if (ch >= 0 && ch < SCAN_BAND_ORDER_COUNT)
+            return ch;
+    }
+    return 0;
+}
+#endif
+
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+// analog_ch is the band-order index (== the analog channel for A..R), used in
+// place of the row's stored analog index so the F8/R7 alias (both 5880 MHz,
+// merged to the R7 row) tunes/labels as F8 at the F8 slot and R7 at the R7 slot.
+static void apply_freq_entry(const scan_freq_entry_t *entry,
+                             const scan_result_t *r,
+                             bool send_msp, int analog_ch) {
+    if (r->protocol == PROTOCOL_HDZ) {
+        dvr_cmd(DVR_STOP);
+
+        // Persist the new band+channel FIRST so a subsequent source switch
+        // (app_switch_to_hdzero(true)) tunes directly to it instead of the
+        // old value and then we re-tune. The freq table carries the band
+        // (Race vs Low) per entry; committing it here is what lets the
+        // unified dial cross between bands correctly.
+        bool channel_changed = false;
+        if (entry->hdz_band >= 0 &&
+            g_setting.source.hdzero_band != (uint8_t)entry->hdz_band) {
+            g_setting.source.hdzero_band = (uint8_t)entry->hdz_band;
+            ini_putl("source", "hdzero_band",
+                     g_setting.source.hdzero_band, SETTING_INI);
+            channel_changed = true;
+        }
+        if (entry->hdz_channel >= 0) {
+            uint8_t new_ch = (uint8_t)entry->hdz_channel + 1;
+            if (g_setting.scan.channel != new_ch) {
+                g_setting.scan.channel = new_ch;
+                ini_putl("scan", "channel",
+                         g_setting.scan.channel, SETTING_INI);
+                channel_changed = true;
+            }
+        }
+
+        if (g_source_info.source != SOURCE_HDZERO) {
+            // Cross-protocol switch. app_switch_to_hdzero(true) reads
+            // g_setting.scan.channel (just persisted above) and tunes to it.
+            // We must also commit app_state + g_source_info.source + dvr
+            // routing (matches the page_source.c pattern); without this,
+            // periodic checks see stale source and the next dial click
+            // re-runs this whole ~1.4s switch path.
+            app_switch_to_hdzero(true);
+            app_state_push(APP_STATE_VIDEO);
+            g_source_info.source = SOURCE_HDZERO;
+            dvr_select_audio_source(g_setting.record.audio_source);
+            dvr_enable_line_out(true);
+        } else if (channel_changed) {
+            // Already on HDZ: lightweight retune. In Both mode the locked
+            // bandwidth may differ from what's open, so re-open the baseband
+            // first (no-op when the bandwidth is unchanged).
+            HDZero_open(hdzero_effective_bw());
+            hdzero_switch_channel(g_setting.scan.channel - 1);
+        }
+        if (send_msp) msp_channel_update();
+    } else if (r->protocol == PROTOCOL_ANALOG) {
+        dvr_cmd(DVR_STOP);
+
+        bool channel_changed = false;
+        if (entry->analog_channel >= 0) {
+            uint8_t new_ch = (uint8_t)analog_ch + 1;
+            if (g_setting.source.analog_channel != new_ch) {
+                g_setting.source.analog_channel = new_ch;
+                ini_putl("source", "analog_channel",
+                         g_setting.source.analog_channel, SETTING_INI);
+                channel_changed = true;
+            }
+        }
+
+        if (g_source_info.source != SOURCE_AV_MODULE) {
+            // app_switch_to_analog(0) reads g_setting.source.analog_channel
+            // and tunes to it.
+            app_switch_to_analog(0);
+            app_state_push(APP_STATE_VIDEO);
+            g_source_info.source = SOURCE_AV_MODULE;
+            dvr_select_audio_source(g_setting.record.audio_source);
+            dvr_enable_line_out(true);
+        } else if (channel_changed) {
+            rtc6715.set_ch(g_setting.source.analog_channel - 1);
+        }
+        if (send_msp) msp_channel_update();
+    } else {
+        dvr_cmd(DVR_STOP);
+        // No signal: stay on current source, but tune to the entry's
+        // matching protocol channel so subsequent navigation makes sense.
+        if (g_source_info.source == SOURCE_HDZERO && entry->hdz_channel >= 0) {
+            if (entry->hdz_band >= 0) {
+                g_setting.source.hdzero_band = (uint8_t)entry->hdz_band;
+                ini_putl("source", "hdzero_band",
+                         g_setting.source.hdzero_band, SETTING_INI);
+            }
+            g_setting.scan.channel = (uint8_t)entry->hdz_channel + 1;
+            hdzero_switch_channel(g_setting.scan.channel - 1);
+        } else if (g_source_info.source == SOURCE_AV_MODULE && entry->analog_channel >= 0) {
+            g_setting.source.analog_channel = (uint8_t)analog_ch + 1;
+            rtc6715.set_ch(g_setting.source.analog_channel - 1);
+        }
+    }
+}
+#endif
 
 void tune_channel(uint8_t action) {
     static uint8_t channel = 0;
 
     if (g_setting.ease.no_dial)
+        return;
+
+    // Channel selection is disabled while an auto-detect probe is in flight
+    // (the "Detecting..." tag is showing).
+    if (osd_is_detecting())
         return;
 
 #if defined HDZGOGGLE
@@ -92,6 +258,132 @@ void tune_channel(uint8_t action) {
 
     LOGI("tune_channel:%d", action);
 
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
+    if (g_setting.source.auto_protocol_detect &&
+        (g_source_info.source == SOURCE_HDZERO ||
+         g_source_info.source == SOURCE_AV_MODULE)) {
+
+        // Auto-detect path: walk the unified frequency table on UP/DOWN,
+        // probe both protocols on CLICK/PRESS.
+        if (auto_detect_freq_idx < 0) auto_detect_freq_idx = find_freq_table_index();
+
+        if (action == DIAL_KEY_UP) {
+            auto_detect_freq_idx = (auto_detect_freq_idx + 1) % SCAN_BAND_ORDER_COUNT;
+        } else if (action == DIAL_KEY_DOWN) {
+            auto_detect_freq_idx = (auto_detect_freq_idx - 1 + SCAN_BAND_ORDER_COUNT)
+                       % SCAN_BAND_ORDER_COUNT;
+        } else if (action == DIAL_KEY_CLICK || action == DIAL_KEY_PRESS) {
+            const scan_freq_entry_t *entry = scan_band_order_entry(auto_detect_freq_idx);
+            if (!entry) return;
+            // Show "Detecting..." while the (blocking) probe runs.
+            osd_detecting_show(true);
+            scan_result_t r;
+            r.protocol  = PROTOCOL_NONE;
+            r.strength  = 0;
+            r.hdz_gain  = 0;
+            r.analog_mv = 0;
+            r.hdz_bw    = 0;
+            if (!AUTODETECT_FAST_DIAL &&
+                g_setting.source.hdzero_bw == SETTING_SOURCES_HDZERO_BW_BOTH) {
+                // Both: sweep bandwidths to determine protocol AND which
+                // bandwidth locks, so the live view opens at the right one.
+                uint8_t locked_bw = g_hdz_detected_bw;
+                r = scan_probe_both_sweep(entry, &locked_bw);
+                if (r.protocol == PROTOCOL_NONE) {
+                    // Honor single-protocol intent even if nothing locked.
+                    if (entry->hdz_channel >= 0 && entry->analog_channel < 0)
+                        r.protocol = PROTOCOL_HDZ;
+                    else if (entry->analog_channel >= 0 && entry->hdz_channel < 0)
+                        r.protocol = PROTOCOL_ANALOG;
+                    else
+                        r.protocol = (g_source_info.source == SOURCE_AV_MODULE)
+                                         ? PROTOCOL_ANALOG : PROTOCOL_HDZ;
+                }
+                if (r.protocol == PROTOCOL_HDZ)
+                    g_hdz_detected_bw = locked_bw;
+            } else {
+                // Single bandwidth — fast path, no sweep. For single-protocol
+                // entries, honor the click as intent: switch without requiring
+                // a probe (probes can return invalid for transient reasons).
+                if (entry->hdz_channel >= 0 && entry->analog_channel < 0) {
+                    r.protocol = PROTOCOL_HDZ;
+                } else if (entry->analog_channel >= 0 && entry->hdz_channel < 0) {
+                    r.protocol = PROTOCOL_ANALOG;
+                } else {
+                    r = scan_probe_both(entry);
+                    if (r.protocol == PROTOCOL_NONE) {
+                        r.protocol = (g_source_info.source == SOURCE_AV_MODULE)
+                                         ? PROTOCOL_ANALOG : PROTOCOL_HDZ;
+                    }
+                }
+            }
+            apply_freq_entry(entry, &r, action == DIAL_KEY_PRESS,
+                             auto_detect_freq_idx);
+            channel_osd_mode = CHANNEL_SHOWTIME;
+            channel_osd_preview_proto = 0; // back to normal "CH:" display
+            channel_osd_preview_band = 0xFF;
+            tune_state = 1;
+            tune_timer = 0;
+            osd_detecting_show(false); // back to the normal channel tag
+            return;
+        } else {
+            return;
+        }
+
+        // For UP/DOWN: render a preview that's always meaningful, even when
+        // the entry's protocol differs from the current source. Prefer the
+        // current source's namespace if the entry has it; otherwise fall
+        // back to whichever protocol the entry does have. channel_osd_mode
+        // carries the channel index; channel_osd_preview_proto tells the OSD
+        // which namespace (HDZ vs analog) to format with.
+        const scan_freq_entry_t *entry = scan_band_order_entry(auto_detect_freq_idx);
+        if (!entry) return;
+        bool prefer_hdz = (g_source_info.source == SOURCE_HDZERO);
+        // F8 and R7 are the same 5880 MHz frequency, merged into one (R7-tagged)
+        // row. At the F8 band-order slot that row's HDZ channel (R7) really
+        // belongs to the R7 slot, so show this slot's own analog name (F8). The
+        // tell: the band-order index doesn't match the row's analog index.
+        // analog_ch is the band-order index, which equals the analog channel
+        // for A..R, so it names F8 as F8 (and R7 as R7 at the R7 slot).
+        int analog_ch = auto_detect_freq_idx;
+        bool alias_analog = (auto_detect_freq_idx < 40 &&
+                             (int)entry->analog_channel != auto_detect_freq_idx);
+        // Dual = this frequency carries both protocols (the F8/R7 alias slot is
+        // presented as analog-only F8, so it is not "dual"). Tag it "Dual"; the
+        // name is the same in either namespace, so format it as HDZ.
+        bool is_dual = (entry->hdz_channel >= 0 && entry->analog_channel >= 0 &&
+                        !alias_analog);
+        // Default: no band override. Set it below for HDZ previews so a
+        // lowband entry shows "L*" even while the committed band is Race.
+        channel_osd_preview_band = 0xFF;
+        if (is_dual) {
+            channel_osd_mode = 0x80 | ((uint8_t)entry->hdz_channel + 1);
+            channel_osd_preview_proto = 3; // Dual
+            if (entry->hdz_band >= 0) channel_osd_preview_band = (uint8_t)entry->hdz_band;
+        } else if (prefer_hdz && entry->hdz_channel >= 0 && !alias_analog) {
+            channel_osd_mode = 0x80 | ((uint8_t)entry->hdz_channel + 1);
+            channel_osd_preview_proto = 1;
+            if (entry->hdz_band >= 0) channel_osd_preview_band = (uint8_t)entry->hdz_band;
+        } else if (entry->analog_channel >= 0 && (!prefer_hdz || alias_analog)) {
+            channel_osd_mode = 0x80 | ((uint8_t)analog_ch + 1);
+            channel_osd_preview_proto = 2;
+        } else if (entry->hdz_channel >= 0 && !alias_analog) {
+            channel_osd_mode = 0x80 | ((uint8_t)entry->hdz_channel + 1);
+            channel_osd_preview_proto = 1;
+            if (entry->hdz_band >= 0) channel_osd_preview_band = (uint8_t)entry->hdz_band;
+        } else if (entry->analog_channel >= 0) {
+            channel_osd_mode = 0x80 | ((uint8_t)analog_ch + 1);
+            channel_osd_preview_proto = 2;
+        } else {
+            channel_osd_mode = 0;
+            channel_osd_preview_proto = 0;
+        }
+        tune_timer = TUNER_TIMER_LEN;
+        tune_state = 2;
+        return;
+    }
+#endif
+
     if (tune_state == 0) {
         channel_osd_mode = 0;
         tune_state = 1;
@@ -102,37 +394,27 @@ void tune_channel(uint8_t action) {
             tune_timer = TUNER_TIMER_LEN;
             tune_state = 2;
 
-#if defined HDZGOGGLE
-            channel = g_setting.scan.channel;
-            if (g_setting.source.dial_lowband && g_setting.source.hdzero_band != RACE_BAND)
-                channel += BASE_CH_NUM; // lift into the all-band index
-#elif defined(HDZBOXPRO) || defined(HDZGOGGLE2)
             if (g_source_info.source == SOURCE_HDZERO) {
-                channel = g_setting.scan.channel;
-                if (g_setting.source.dial_lowband && g_setting.source.hdzero_band != RACE_BAND)
-                    channel += BASE_CH_NUM; // lift into the all-band index
+                // Walk a flat 20-channel space across both bands (no toggle).
+                channel = (uint8_t)(hdz_band_ch_to_flat(
+                              g_setting.source.hdzero_band,
+                              g_setting.scan.channel) + 1);
+#if defined(HDZBOXPRO) || defined(HDZGOGGLE2)
             } else if (g_source_info.source == SOURCE_AV_MODULE) {
                 channel = g_setting.source.analog_channel;
+#endif
             } else {
                 return;
             }
-#endif
         }
     }
 
     if (tune_state != 2)
         return;
 
-    // With "Dial Lowband" on, the dial scrolls one combined list of all 20
-    // HDZero channels (R1-R8, E1, F1, F2, F4, then L1-L8) as a virtual
-    // index 1..20; confirming a Lowband entry switches the band.
-    bool const all_bands = (g_source_info.source == SOURCE_HDZERO) && g_setting.source.dial_lowband;
-
     uint8_t channel_num;
-    if (all_bands)
-        channel_num = BASE_CH_NUM + 8;
-    else if (g_source_info.source == SOURCE_HDZERO)
-        channel_num = HDZERO_CHANNEL_NUM;
+    if (g_source_info.source == SOURCE_HDZERO)
+        channel_num = HDZ_FLAT_COUNT;
     else if (g_source_info.source == SOURCE_AV_MODULE)
         channel_num = ANALOG_CHANNEL_NUM;
     else
@@ -156,41 +438,50 @@ void tune_channel(uint8_t action) {
     case DIAL_KEY_PRESS: // confirm to tune with VTX freq send
     case DIAL_KEY_CLICK: // confirm to tune
         if (g_source_info.source == SOURCE_HDZERO) {
-            uint8_t new_band = g_setting.source.hdzero_band;
-            uint8_t new_ch = channel;
-            if (all_bands) {
-                new_band = (channel > BASE_CH_NUM) ? LOW_BAND : RACE_BAND;
-                new_ch = (channel > BASE_CH_NUM) ? channel - BASE_CH_NUM : channel;
-            }
-            if (g_setting.scan.channel != new_ch || g_setting.source.hdzero_band != new_band) {
-                if (g_setting.source.hdzero_band != new_band) {
-                    g_setting.source.hdzero_band = new_band;
-                    ini_putl("source", "hdzero_band", g_setting.source.hdzero_band, SETTING_INI);
-                    page_scannow_set_channel_label();
-                }
-                g_setting.scan.channel = new_ch;
-                ini_putl("scan", "channel", g_setting.scan.channel, SETTING_INI);
+            // channel is a flat 0..19 index (+1); map back to band+channel.
+            uint8_t nband, nch1;
+            hdz_flat_to_band_ch((int)channel - 1, &nband, &nch1);
+            // A deliberate long press always sends. With Auto Send VTX on, a
+            // plain click sends too, so the drone follows the goggles without
+            // a second gesture.
+            bool const send_on_change = (action == DIAL_KEY_PRESS) || g_setting.elrs.auto_send_vtx;
+            if (g_setting.scan.channel != nch1 ||
+                g_setting.source.hdzero_band != nband) {
+                g_setting.source.hdzero_band = nband;
+                ini_putl("source", "hdzero_band", nband, SETTING_INI);
+                g_setting.scan.channel = nch1;
+                ini_putl("scan", "channel", nch1, SETTING_INI);
                 dvr_cmd(DVR_STOP);
-                hdzero_switch_channel(g_setting.scan.channel - 1);
-                // Only the deliberate long press sends the channel to the
-                // VTX; a click retunes the goggles alone, so previewing
-                // another pilot's channel can never retune your drone.
-                if (action == DIAL_KEY_PRESS && msp_channel_update()) {
+                // Auto/Both: switch at the currently open bandwidth. If the new
+                // channel's VTX is on the other one, the bw-reacquire watchdog
+                // (scan_core_hdz_bw_tick) settles it within ~2s behind the
+                // "Detecting..." mask. The old per-click Wide+Narrow sweep
+                // re-inited the DM6302 up to three times (~5s frozen, unmasked
+                // green flashes) on every confirm.
+                hdzero_switch_channel(nch1 - 1);
+                if (send_on_change && msp_channel_update()) {
                     channel_osd_sent = CHANNEL_SHOWTIME;
                 }
             } else if (action == DIAL_KEY_PRESS) {
-                // Long press on the current channel: re-send the VTX channel
+                // Long press on the channel already tuned: re-send it. Without
+                // this the dial only sends when it lands somewhere new, so
+                // scrolling away and back was the only way to trigger a send.
                 if (msp_channel_update()) {
                     channel_osd_sent = CHANNEL_SHOWTIME;
                 }
             }
         } else if (g_source_info.source == SOURCE_AV_MODULE) {
+            bool const send_on_change = (action == DIAL_KEY_PRESS) || g_setting.elrs.auto_send_vtx;
             if (g_setting.source.analog_channel != channel) {
                 g_setting.source.analog_channel = channel;
                 ini_putl("source", "analog_channel", g_setting.source.analog_channel, SETTING_INI);
                 dvr_cmd(DVR_STOP);
                 rtc6715.set_ch(g_setting.source.analog_channel - 1);
-                if (action == DIAL_KEY_PRESS && msp_channel_update()) {
+                if (send_on_change && msp_channel_update()) {
+                    channel_osd_sent = CHANNEL_SHOWTIME;
+                }
+            } else if (action == DIAL_KEY_PRESS) {
+                if (msp_channel_update()) {
                     channel_osd_sent = CHANNEL_SHOWTIME;
                 }
             }
@@ -198,6 +489,8 @@ void tune_channel(uint8_t action) {
         tune_timer = 0;
         tune_state = 1;
         channel_osd_mode = CHANNEL_SHOWTIME;
+        channel_osd_preview_proto = 0;
+        channel_osd_preview_band = 0xFF;
         return;
 
     default:
@@ -205,7 +498,18 @@ void tune_channel(uint8_t action) {
         break;
     }
 
-    channel_osd_mode = 0x80 | channel;
+    if (g_source_info.source == SOURCE_HDZERO) {
+        // channel is a flat index (+1); preview the matching band's R*/L* name.
+        uint8_t pband, pch1;
+        hdz_flat_to_band_ch((int)channel - 1, &pband, &pch1);
+        channel_osd_mode = 0x80 | pch1;
+        channel_osd_preview_proto = 0; // untagged "To L4?" like the classic dial
+        channel_osd_preview_band = pband;
+    } else {
+        channel_osd_mode = 0x80 | channel;
+        channel_osd_preview_proto = 0;
+        channel_osd_preview_band = 0xFF;
+    }
     tune_timer = TUNER_TIMER_LEN;
 }
 
@@ -326,10 +630,12 @@ static void btn_press(void) // long press left key
         pb_key(DIAL_KEY_PRESS);
     } else if (g_app_state == APP_STATE_SLEEP) {
         wake_up();
-    } else { // Sub-menu  -> Main menu
-        submenu_exit();
-        app_state_push(APP_STATE_MAINMENU);
-        main_menu_show(true);
+    } else { // Sub-menu -> back. Page may absorb (e.g. scan_now RESULTS->IDLE);
+             // otherwise fall through to Main menu.
+        if (!submenu_back()) {
+            app_state_push(APP_STATE_MAINMENU);
+            main_menu_show(true);
+        }
     }
     pthread_mutex_unlock(&lvgl_mutex);
 }
@@ -438,11 +744,16 @@ void rbtn_click(right_button_t click_type) {
         switch (g_app_state) {
         case APP_STATE_SUBMENU:
         case APP_STATE_WIFI:
-        case APP_STATE_PLAYBACK: // during video playback the playback page routes these to the player
             if (click_type == RIGHT_CLICK)
                 submenu_right_button(true);
             else if (click_type == RIGHT_LONG_PRESS)
                 submenu_right_button(false);
+            break;
+        case APP_STATE_PLAYBACK: // the playback page routes the right button to the player
+            if (click_type == RIGHT_CLICK)
+                pb_key(RIGHT_KEY_CLICK);
+            else if (click_type == RIGHT_LONG_PRESS)
+                pb_key(RIGHT_KEY_PRESS);
             break;
         case APP_STATE_VIDEO:
             if (click_type == RIGHT_CLICK) {
