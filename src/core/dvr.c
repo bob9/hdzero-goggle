@@ -509,6 +509,47 @@ static void dvr_update_record_conf() {
         ini_putl("venc", "kbps", 34000 * bitrate_num / bitrate_den, REC_CONF);
     }
 
+    // Rate control. The recorder reads "rc" from [venc]; 0 = CBR, 1 = VBR.
+    //
+    // Under CBR the kbps above is a target the encoder must fill, so quality
+    // varies with scene complexity and file size does not. Under VBR the same
+    // number becomes mMaxBitRate - a ceiling - and the encoder spends by
+    // complexity, which is the better fit for FPV where a clip swings between
+    // open sky and dense canopy.
+    //
+    // VBR also needs "quality" (the encoder's own 0-13 scale), which the
+    // shipped record.conf does not carry - it would otherwise default to 0.
+    // And it needs a tighter maxQP: the stock 52 is the worst QP H.264
+    // permits, so with only a ceiling and no floor the encoder is free to
+    // degrade indefinitely to stay under it. 40 bounds that; CBR keeps 52
+    // because there the encoder must fill the target anyway.
+    int vbr_quality = 0;
+    switch (g_setting.record.rc_mode) {
+    case SETTING_RECORD_RC_VBR_Q2:
+        vbr_quality = 2;
+        break;
+    case SETTING_RECORD_RC_VBR_Q6:
+        vbr_quality = 6;
+        break;
+    case SETTING_RECORD_RC_VBR_Q10:
+        vbr_quality = 10;
+        break;
+    case SETTING_RECORD_RC_CBR:
+    default:
+        break;
+    }
+
+    ini_putl("venc", "rc", vbr_quality ? 1 : 0, REC_CONF);
+    for (int i = 0; i < 2; i++) {
+        const char *sec = i ? "h265" : "h264";
+        if (vbr_quality) {
+            ini_putl(sec, "quality", vbr_quality, REC_CONF);
+            ini_putl(sec, "maxQP", 40, REC_CONF);
+        } else {
+            ini_putl(sec, "maxQP", 52, REC_CONF); // stock
+        }
+    }
+
     ini_putl("record", "audio", g_setting.record.audio, REC_CONF);
     dvr_select_audio_source(g_setting.record.audio_source);
     ini_putl("record", "naming", g_setting.record.naming, REC_CONF);

@@ -59,6 +59,7 @@ const setting_t g_setting_defaults = {
         .mode_manual = false,
         .format_ts = true,
         .bitrate_scale = SETTING_RECORD_BITRATE_SCALE_NORMAL,
+        .rc_mode = SETTING_RECORD_RC_CBR,
         .osd = true,
         .audio = true,
         .audio_source = SETTING_RECORD_AUDIO_SOURCE_MIC,
@@ -539,6 +540,9 @@ void settings_load(void) {
     g_setting.record.mode_manual = settings_get_bool("record", "mode_manual", g_setting_defaults.record.mode_manual);
     g_setting.record.format_ts = settings_get_bool("record", "format_ts", g_setting_defaults.record.format_ts);
     g_setting.record.bitrate_scale = ini_getl("record", "bitrate_scale", g_setting_defaults.record.bitrate_scale, SETTING_INI);
+    g_setting.record.rc_mode = ini_getl("record", "rc_mode", g_setting_defaults.record.rc_mode, SETTING_INI);
+    if (g_setting.record.rc_mode > SETTING_RECORD_RC_VBR_Q10)
+        g_setting.record.rc_mode = SETTING_RECORD_RC_CBR;
     g_setting.record.osd = settings_get_bool("record", "osd", g_setting_defaults.record.osd);
     g_setting.record.audio = settings_get_bool("record", "audio", g_setting_defaults.record.audio);
     g_setting.record.audio_source = ini_getl("record", "audio_source", g_setting_defaults.record.audio_source, SETTING_INI);

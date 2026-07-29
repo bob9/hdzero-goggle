@@ -21,6 +21,7 @@
 static btn_group_t btn_group_record_mode;
 static btn_group_t btn_group_format;
 static btn_group_t btn_group_bitrate_scale;
+static btn_group_t btn_group_rate_control;
 static btn_group_t btn_group_record_osd;
 static btn_group_t btn_group_file_naming;
 static slider_group_t slider_group_stop_delay;
@@ -30,6 +31,7 @@ enum {
     ROW_RECORD_FORMAT,
     ROW_RECORD_BITRATE,
     ROW_RECORD_BITRATE_WRAP, // 5 bitrate buttons wrap onto a second grid row
+    ROW_RATE_CONTROL,
     ROW_RECORD_OSD,
     ROW_NAMING_SCHEME,
     ROW_STOP_DELAY,
@@ -120,6 +122,7 @@ static lv_obj_t *page_record_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_set_grid_cell(arr->panel[ROW_RECORD_BITRATE], LV_GRID_ALIGN_STRETCH, 0, 6,
                          LV_GRID_ALIGN_STRETCH, ROW_RECORD_BITRATE, 2);
     lv_obj_clear_flag(arr->panel[ROW_RECORD_BITRATE_WRAP], FLAG_SELECTABLE);
+    create_btn_group_item(&btn_group_rate_control, cont, 4, _lang("Rate Control"), "CBR", "VBR 2", "VBR 6", "VBR 10", ROW_RATE_CONTROL);
     create_btn_group_item(&btn_group_record_osd, cont, 2, _lang("Record OSD"), _lang("Yes"), _lang("No"), "", "", ROW_RECORD_OSD);
     create_btn_group_item(&btn_group_file_naming, cont, 3, _lang("Naming Scheme"), _lang("Digits"), _lang("Date"), "ELRS", "", ROW_NAMING_SCHEME);
     create_slider_item(&slider_group_stop_delay, cont, _lang("Auto DVR Stop Delay"), STOP_DELAY_MAX, g_setting.record.stop_delay_seconds, ROW_STOP_DELAY);
@@ -127,10 +130,11 @@ static lv_obj_t *page_record_create(lv_obj_t *parent, panel_arr_t *arr) {
     create_label_item(cont, buf, 1, ROW_BACK, 1);
 
     lv_obj_t *label2 = lv_label_create(cont);
-    snprintf(buf, sizeof(buf), "%s.\n%s.\n%s.",
+    snprintf(buf, sizeof(buf), "%s.\n%s.\n%s.\n%s.",
              _lang("MP4 format requires properly closing files or the files will be corrupt"),
              _lang("TS format is highly recommended"),
-             _lang("Bitrate: Normal is the default; 1/4 and 1/2 save card space, 1.5x/2x record higher quality but need a fast SD card"));
+             _lang("Bitrate: 1/4 and 1/2 save card space, 1.5x/2x record higher quality but need a fast SD card"),
+             _lang("Rate Control: CBR is stock - steady file size, quality varies. VBR treats the bitrate as a ceiling: steadier quality and smaller files, but higher write peaks"));
     lv_label_set_text(label2, buf);
     lv_obj_set_style_text_font(label2, UI_PAGE_LABEL_FONT, 0);
     lv_obj_set_style_text_align(label2, LV_TEXT_ALIGN_LEFT, 0);
@@ -143,6 +147,7 @@ static lv_obj_t *page_record_create(lv_obj_t *parent, panel_arr_t *arr) {
     btn_group_set_sel(&btn_group_record_mode, g_setting.record.mode_manual ? 1 : 0);
     btn_group_set_sel(&btn_group_format, g_setting.record.format_ts ? 1 : 0);
     btn_group_set_sel(&btn_group_bitrate_scale, bitrate_setting_to_btn(g_setting.record.bitrate_scale));
+    btn_group_set_sel(&btn_group_rate_control, g_setting.record.rc_mode);
     btn_group_set_sel(&btn_group_record_osd, g_setting.record.osd ? 0 : 1);
     btn_group_set_sel(&btn_group_file_naming, g_setting.record.naming);
     update_stop_delay_label();
@@ -213,6 +218,10 @@ static void page_record_on_click(uint8_t key, int sel) {
         btn_group_toggle_sel(&btn_group_bitrate_scale);
         g_setting.record.bitrate_scale = bitrate_btn_to_setting[btn_group_get_sel(&btn_group_bitrate_scale)];
         ini_putl("record", "bitrate_scale", g_setting.record.bitrate_scale, SETTING_INI);
+    } else if (sel == ROW_RATE_CONTROL) {
+        btn_group_toggle_sel(&btn_group_rate_control);
+        g_setting.record.rc_mode = btn_group_get_sel(&btn_group_rate_control);
+        ini_putl("record", "rc_mode", g_setting.record.rc_mode, SETTING_INI);
     } else if (sel == ROW_RECORD_OSD) {
         btn_group_toggle_sel(&btn_group_record_osd);
         g_setting.record.osd = !btn_group_get_sel(&btn_group_record_osd);

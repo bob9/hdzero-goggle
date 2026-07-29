@@ -105,6 +105,19 @@ typedef enum {
     SETTING_RECORD_BITRATE_SCALE_HALF = 4,    // 1/2 bitrate, smaller files
 } setting_record_bitrate_scale_t;
 
+// Rate control. CBR spends the chosen bitrate whatever the scene, so quality
+// varies and file size does not. VBR treats the bitrate as a ceiling and
+// spends by scene complexity, so quality is steadier and files are smaller -
+// at the cost of higher write peaks. The quality figure is the encoder's own
+// 0-13 scale; the direction is undocumented, so three values are exposed to
+// compare rather than one guessed default.
+typedef enum {
+    SETTING_RECORD_RC_CBR = 0,     // stock behaviour, the default
+    SETTING_RECORD_RC_VBR_Q2 = 1,  // VBR, quality 2
+    SETTING_RECORD_RC_VBR_Q6 = 2,  // VBR, quality 6
+    SETTING_RECORD_RC_VBR_Q10 = 3, // VBR, quality 10
+} setting_record_rc_t;
+
 typedef enum {
     SETTING_NAMING_CONTIGUOUS,
     SETTING_NAMING_DATE,
@@ -123,6 +136,7 @@ typedef struct {
     int mic_gain;
     int linein_gain;
     setting_record_naming_t naming;
+    uint8_t rc_mode; // setting_record_rc_t
     uint8_t stop_delay_seconds; // auto record: grace period after signal loss before stopping (0 = off)
 } setting_record_t;
 
