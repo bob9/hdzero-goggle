@@ -30,6 +30,7 @@ enum {
     POS_VTX,
     POS_VTX_CTRL,
     POS_AUTO_SEND,
+    POS_SENT_OSD,
     POS_PWR,
     POS_WIFI,
     POS_BIND,
@@ -48,6 +49,7 @@ static lv_obj_t *btn_vtx_send;
 static btn_group_t elrs_group;
 static btn_group_t vtx_ctrl_group;
 static btn_group_t auto_send_group;
+static btn_group_t sent_osd_group;
 static bool binding = false;
 
 static void update_visibility() {
@@ -57,10 +59,13 @@ static void update_visibility() {
     btn_group_enable(&vtx_ctrl_group, backpackIsActive);
     // Auto Send only means anything while sending is permitted at all
     btn_group_enable(&auto_send_group, vtxSendAllowed);
+    btn_group_enable(&sent_osd_group, vtxSendAllowed);
     if (vtxSendAllowed) {
         lv_obj_add_flag(pp_elrs.p_arr.panel[POS_AUTO_SEND], FLAG_SELECTABLE);
+        lv_obj_add_flag(pp_elrs.p_arr.panel[POS_SENT_OSD], FLAG_SELECTABLE);
     } else {
         lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_AUTO_SEND], FLAG_SELECTABLE);
+        lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_SENT_OSD], FLAG_SELECTABLE);
     }
 
     // Send VTX is usable only when the backpack is on AND VTX Control
@@ -131,6 +136,9 @@ static lv_obj_t *page_elrs_create(lv_obj_t *parent, panel_arr_t *arr) {
     snprintf(buf, sizeof(buf), "%s VTX", _lang("Auto Send"));
     create_btn_group_item(&auto_send_group, cont, 2, buf, _lang("On"), _lang("Off"), "", "", POS_AUTO_SEND);
     btn_group_set_sel(&auto_send_group, !g_setting.elrs.auto_send_vtx);
+    snprintf(buf, sizeof(buf), "%s OSD", _lang("VTX Sent"));
+    create_btn_group_item(&sent_osd_group, cont, 3, buf, _lang("On"), _lang("Long press"), _lang("Off"), "", POS_SENT_OSD);
+    btn_group_set_sel(&sent_osd_group, g_setting.elrs.vtx_sent_osd);
     btn_wifi = create_label_item(cont, "WiFi", 1, POS_WIFI, 1);
     label_wifi_status = create_label_item(cont, _lang("Click to start"), 2, POS_WIFI, 1);
     btn_bind = create_label_item(cont, _lang("Bind"), 1, POS_BIND, 1);
@@ -217,7 +225,7 @@ static void page_elrs_on_click(uint8_t key, int sel) {
         update_visibility();
     } else if (sel == POS_VTX) // Send VTX freq
     {
-        if (msp_channel_update()) {
+        if (msp_channel_update() && vtx_sent_osd_wanted(true)) {
             channel_osd_sent = CHANNEL_SHOWTIME;
         }
     } else if (sel == POS_VTX_CTRL) // master switch: may VTX commands be sent at all
@@ -231,6 +239,11 @@ static void page_elrs_on_click(uint8_t key, int sel) {
         btn_group_toggle_sel(&auto_send_group);
         g_setting.elrs.auto_send_vtx = btn_group_get_sel(&auto_send_group) == 0;
         settings_put_bool("elrs", "auto_send_vtx", g_setting.elrs.auto_send_vtx);
+    } else if (sel == POS_SENT_OSD) // when to show the green VTX SENT banner
+    {
+        btn_group_toggle_sel(&sent_osd_group);
+        g_setting.elrs.vtx_sent_osd = btn_group_get_sel(&sent_osd_group);
+        ini_putl("elrs", "vtx_sent_osd", g_setting.elrs.vtx_sent_osd, SETTING_INI);
     } else if (sel == POS_WIFI) // start ESP Wifi
     {
         snprintf(buf, sizeof(buf), "%s...", _lang("Starting"));

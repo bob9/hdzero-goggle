@@ -1013,6 +1013,28 @@ void Display_Osd(bool enable) {
     I2C_Write(ADDR_FPGA, 0x84, enable ? 0x11 : 0x01);
 }
 
+// Record-OSD probe - see the comment on the goggle build. Steps candidate
+// 0x84 values live so the value that keeps the OSD on screen but out of the
+// recording can be found on hardware. 0 restores stock.
+static const uint8_t osd_probe_val[] = {
+    0x11, 0x01, 0x03, 0x05, 0x09, 0x21, 0x41, 0x81, 0x13, 0x31,
+};
+#define OSD_PROBE_COUNT (int)(sizeof(osd_probe_val) / sizeof(osd_probe_val[0]))
+
+static int osd_probe_idx = 0;
+
+void Display_Osd_ProbeNext(void) {
+    osd_probe_idx = (osd_probe_idx + 1) % OSD_PROBE_COUNT;
+
+    pthread_mutex_lock(&hardware_mutex);
+    I2C_Write(ADDR_FPGA, 0x84, osd_probe_val[osd_probe_idx]);
+    pthread_mutex_unlock(&hardware_mutex);
+
+    LOGI("osd probe %d/%d: 0x84 = 0x%02x", osd_probe_idx, OSD_PROBE_COUNT - 1,
+         osd_probe_val[osd_probe_idx]);
+    beep();
+}
+
 void Set_Brightness(uint8_t bri) {
     int8_t val = 0x80 + bri - 39;
     I2C_Write(ADDR_FPGA, 0x85, val);

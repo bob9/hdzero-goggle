@@ -1449,6 +1449,48 @@ void Display_Osd(bool enable) {
     I2C_Write(ADDR_FPGA, 0x84, enable ? 0x11 : 0x01);
 }
 
+// Record-OSD probe. "Record OSD: No" writes 0x84=0x01 and is reported to
+// leave the OSD in the file anyway - the pilot sees it on screen and it is
+// still burned into the recording. Key-probe round 2 (9.5.24) established
+// bit0 of 0x84 as the overlay master enable and bit4 as the chroma key, so
+// the value stock uses for "off" may no longer gate the record path at all.
+//
+// This steps candidate values live, with bit0 held set so the overlay stays
+// alive, and logs each one. Bind "OSD Probe" to a button on the Inputs page,
+// then in live video with a flight controller connected: start a recording,
+// press once, record ~5s, press again, and so on. Afterwards match the clip
+// timestamps against hwlog.txt - the winning value is the one whose clip has
+// no OSD while the goggle screen still showed it. 0 restores stock.
+static const uint8_t osd_probe_val[] = {
+    0x11, // 0: stock "Record OSD: Yes"
+    0x01, // 1: stock "Record OSD: No" - the reported-broken baseline
+    0x03, // 2: bit1
+    0x05, // 3: bit2
+    0x09, // 4: bit3
+    0x21, // 5: bit5
+    0x41, // 6: bit6
+    0x81, // 7: bit7
+    0x13, // 8: key on + bit1
+    0x31, // 9: key on + bit5
+};
+#define OSD_PROBE_COUNT (int)(sizeof(osd_probe_val) / sizeof(osd_probe_val[0]))
+
+static int osd_probe_idx = 0;
+
+void Display_Osd_ProbeNext(void) {
+    osd_probe_idx = (osd_probe_idx + 1) % OSD_PROBE_COUNT;
+
+    pthread_mutex_lock(&hardware_mutex);
+    I2C_Write(ADDR_FPGA, 0x84, osd_probe_val[osd_probe_idx]);
+    pthread_mutex_unlock(&hardware_mutex);
+
+    hwlog("osd probe %d/%d: 0x84 = 0x%02x (record.osd setting = %d)",
+          osd_probe_idx, OSD_PROBE_COUNT - 1, osd_probe_val[osd_probe_idx],
+          g_setting.record.osd);
+    LOGI("osd probe %d: 0x84 = 0x%02x", osd_probe_idx, osd_probe_val[osd_probe_idx]);
+    beep();
+}
+
 void Set_Brightness(uint8_t bri) {
     int8_t val = 0x80 + bri - 39;
     I2C_Write(ADDR_FPGA, 0x85, val);

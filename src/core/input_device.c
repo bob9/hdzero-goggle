@@ -459,14 +459,15 @@ void tune_channel(uint8_t action) {
                 // re-inited the DM6302 up to three times (~5s frozen, unmasked
                 // green flashes) on every confirm.
                 hdzero_switch_channel(nch1 - 1);
-                if (send_on_change && msp_channel_update()) {
+                if (send_on_change && msp_channel_update() &&
+                    vtx_sent_osd_wanted(action == DIAL_KEY_PRESS)) {
                     channel_osd_sent = CHANNEL_SHOWTIME;
                 }
             } else if (action == DIAL_KEY_PRESS) {
                 // Long press on the channel already tuned: re-send it. Without
                 // this the dial only sends when it lands somewhere new, so
                 // scrolling away and back was the only way to trigger a send.
-                if (msp_channel_update()) {
+                if (msp_channel_update() && vtx_sent_osd_wanted(true)) {
                     channel_osd_sent = CHANNEL_SHOWTIME;
                 }
             }
@@ -477,11 +478,12 @@ void tune_channel(uint8_t action) {
                 ini_putl("source", "analog_channel", g_setting.source.analog_channel, SETTING_INI);
                 dvr_cmd(DVR_STOP);
                 rtc6715.set_ch(g_setting.source.analog_channel - 1);
-                if (send_on_change && msp_channel_update()) {
+                if (send_on_change && msp_channel_update() &&
+                    vtx_sent_osd_wanted(action == DIAL_KEY_PRESS)) {
                     channel_osd_sent = CHANNEL_SHOWTIME;
                 }
             } else if (action == DIAL_KEY_PRESS) {
-                if (msp_channel_update()) {
+                if (msp_channel_update() && vtx_sent_osd_wanted(true)) {
                     channel_osd_sent = CHANNEL_SHOWTIME;
                 }
             }

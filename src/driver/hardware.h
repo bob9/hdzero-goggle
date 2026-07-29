@@ -119,6 +119,11 @@ void Display_1080P24(int mode);
 void Display_HDZ(int mode, int is_43);
 void Display_Osd(bool enable);
 
+// Step the record-OSD register probe (see hardware-goggle.c). Bound to the
+// assignable "OSD Probe" button action; a no-op concern for normal use since
+// nothing calls it unless the pilot binds it.
+void Display_Osd_ProbeNext(void);
+
 void Set_Brightness(uint8_t bri);
 void Set_Contrast(uint8_t con);
 void Set_Saturation(uint8_t sat);

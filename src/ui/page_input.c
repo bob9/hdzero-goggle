@@ -12,6 +12,7 @@
 #include "core/input_device.h"
 #include "core/osd.h"
 #include "core/sleep_mode.h"
+#include "driver/hardware.h"
 
 #include "lang/language.h"
 #include "ui/page_fans.h"
@@ -66,6 +67,7 @@ static const action_t btnActions[] = {
     {.id = 8, .name = "Toggle source", .functionPtr = &source_toggle},
     {.id = 9, .name = "Cycle source", .functionPtr = &source_cycle},
     {.id = 11, .name = "Send VTX", .functionPtr = &elrs_send_vtx},
+    {.id = 12, .name = "OSD Probe", .functionPtr = &Display_Osd_ProbeNext},
 };
 
 static const action_t rollerActions[] = {

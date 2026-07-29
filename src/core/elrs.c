@@ -667,10 +667,26 @@ bool msp_channel_update() {
     return true;
 }
 
+// Whether the green "VTX SENT" confirmation should be shown for this send.
+// deliberate = a dial long press, the Send VTX button action, or Send VTX on
+// the ELRS page. With Auto Send VTX on, a plain dial click is not deliberate,
+// so "Long press" keeps the banner for the gestures the pilot meant.
+bool vtx_sent_osd_wanted(bool deliberate) {
+    switch (g_setting.elrs.vtx_sent_osd) {
+    case SETTING_VTX_SENT_OSD_OFF:
+        return false;
+    case SETTING_VTX_SENT_OSD_DELIBERATE:
+        return deliberate;
+    case SETTING_VTX_SENT_OSD_ALWAYS:
+    default:
+        return true;
+    }
+}
+
 // Re-send the current VTX channel to the backpack and show the
 // "VTX SENT" OSD confirmation. Assignable to a button on the Input page.
 void elrs_send_vtx() {
-    if (msp_channel_update()) {
+    if (msp_channel_update() && vtx_sent_osd_wanted(true)) {
         channel_osd_sent = CHANNEL_SHOWTIME;
     }
 }
