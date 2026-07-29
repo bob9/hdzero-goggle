@@ -31,6 +31,7 @@ enum {
     POS_VTX_CTRL,
     POS_AUTO_SEND,
     POS_SENT_OSD,
+    POS_SENT_STYLE,
     POS_PWR,
     POS_WIFI,
     POS_BIND,
@@ -50,7 +51,47 @@ static btn_group_t elrs_group;
 static btn_group_t vtx_ctrl_group;
 static btn_group_t auto_send_group;
 static btn_group_t sent_osd_group;
+static btn_group_t sent_style_group;
+static lv_obj_t *sent_preview = NULL;
+static lv_obj_t *sent_explain = NULL;
 static bool binding = false;
+
+// Live preview of the VTX SENT banner, styled the same way osd.c draws it,
+// plus a line saying when it will appear. Lets the pilot see the difference
+// instead of guessing from the option name.
+static void update_sent_preview() {
+    if (!sent_preview || !sent_explain)
+        return;
+
+    const bool subtle = sent_style_group.current == SETTING_VTX_SENT_STYLE_SUBTLE;
+    if (subtle) {
+        lv_label_set_text(sent_preview, "VTX SENT");
+        lv_obj_set_style_bg_opa(sent_preview, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_text_color(sent_preview, lv_color_make(0x00, 0xB0, 0x00), 0);
+    } else {
+        lv_label_set_text(sent_preview, "  R5  VTX SENT  ");
+        lv_obj_set_style_bg_opa(sent_preview, LV_OPA_100, 0);
+        lv_obj_set_style_text_color(sent_preview, lv_color_make(0x00, 0xFF, 0x00), 0);
+    }
+
+    char buf[256];
+    const char *when;
+    switch (sent_osd_group.current) {
+    case SETTING_VTX_SENT_OSD_DELIBERATE:
+        when = _lang("Shown only after a dial long press or an explicit Send VTX");
+        break;
+    case SETTING_VTX_SENT_OSD_OFF:
+        when = _lang("Never shown");
+        break;
+    default:
+        when = _lang("Shown after every send");
+        break;
+    }
+    snprintf(buf, sizeof(buf), "%s.\n%s.", when,
+             subtle ? _lang("Subtle: label only, dimmer, no background box, and it clears faster")
+                    : _lang("Normal: channel and label in bright green on a black box"));
+    lv_label_set_text(sent_explain, buf);
+}
 
 static void update_visibility() {
     const bool backpackIsActive = elrs_group.current == 0;
@@ -60,12 +101,15 @@ static void update_visibility() {
     // Auto Send only means anything while sending is permitted at all
     btn_group_enable(&auto_send_group, vtxSendAllowed);
     btn_group_enable(&sent_osd_group, vtxSendAllowed);
+    btn_group_enable(&sent_style_group, vtxSendAllowed);
     if (vtxSendAllowed) {
         lv_obj_add_flag(pp_elrs.p_arr.panel[POS_AUTO_SEND], FLAG_SELECTABLE);
         lv_obj_add_flag(pp_elrs.p_arr.panel[POS_SENT_OSD], FLAG_SELECTABLE);
+        lv_obj_add_flag(pp_elrs.p_arr.panel[POS_SENT_STYLE], FLAG_SELECTABLE);
     } else {
         lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_AUTO_SEND], FLAG_SELECTABLE);
         lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_SENT_OSD], FLAG_SELECTABLE);
+        lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_SENT_STYLE], FLAG_SELECTABLE);
     }
 
     // Send VTX is usable only when the backpack is on AND VTX Control
@@ -139,12 +183,31 @@ static lv_obj_t *page_elrs_create(lv_obj_t *parent, panel_arr_t *arr) {
     snprintf(buf, sizeof(buf), "%s OSD", _lang("VTX Sent"));
     create_btn_group_item(&sent_osd_group, cont, 3, buf, _lang("On"), _lang("Long press"), _lang("Off"), "", POS_SENT_OSD);
     btn_group_set_sel(&sent_osd_group, g_setting.elrs.vtx_sent_osd);
+    snprintf(buf, sizeof(buf), "%s %s", _lang("VTX Sent"), _lang("Style"));
+    create_btn_group_item(&sent_style_group, cont, 2, buf, _lang("Normal"), _lang("Subtle"), "", "", POS_SENT_STYLE);
+    btn_group_set_sel(&sent_style_group, g_setting.elrs.vtx_sent_style);
     btn_wifi = create_label_item(cont, "WiFi", 1, POS_WIFI, 1);
     label_wifi_status = create_label_item(cont, _lang("Click to start"), 2, POS_WIFI, 1);
     btn_bind = create_label_item(cont, _lang("Bind"), 1, POS_BIND, 1);
     label_bind_status = create_label_item(cont, _lang("Click to start"), 2, POS_BIND, 1);
     snprintf(buf, sizeof(buf), "< %s", _lang("Back"));
     create_label_item(cont, buf, 1, POS_BACK, 1);
+
+    // Preview pill: same colours and shape osd.c uses for the real banner.
+    sent_preview = lv_label_create(cont);
+    lv_obj_set_style_bg_color(sent_preview, lv_color_hex(0x010101), LV_PART_MAIN);
+    lv_obj_set_style_radius(sent_preview, 50, 0);
+    lv_obj_set_style_pad_all(sent_preview, 4, 0);
+    lv_obj_set_style_text_font(sent_preview, UI_PAGE_TEXT_FONT, 0);
+    lv_obj_set_grid_cell(sent_preview, LV_GRID_ALIGN_START, 1, 3, LV_GRID_ALIGN_CENTER, POS_MAX, 1);
+
+    sent_explain = lv_label_create(cont);
+    lv_obj_set_width(sent_explain, LV_PCT(90));
+    lv_obj_set_style_text_font(sent_explain, UI_PAGE_LABEL_FONT, 0);
+    lv_obj_set_style_text_color(sent_explain, lv_color_hex(TEXT_COLOR_DEFAULT), 0);
+    lv_obj_set_style_pad_top(sent_explain, UI_PAGE_TEXT_PAD, 0);
+    lv_label_set_long_mode(sent_explain, LV_LABEL_LONG_WRAP);
+    lv_obj_set_grid_cell(sent_explain, LV_GRID_ALIGN_START, 1, 4, LV_GRID_ALIGN_START, POS_MAX + 1, 2);
 
     cancel_label = lv_label_create(cont);
     lv_obj_add_flag(cancel_label, LV_OBJ_FLAG_HIDDEN);
@@ -154,8 +217,9 @@ static lv_obj_t *page_elrs_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_set_style_text_color(cancel_label, lv_color_hex(TEXT_COLOR_DEFAULT), 0);
     lv_obj_set_style_pad_top(cancel_label, UI_PAGE_TEXT_PAD, 0);
     lv_label_set_long_mode(cancel_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_grid_cell(cancel_label, LV_GRID_ALIGN_START, 1, 3, LV_GRID_ALIGN_START, POS_MAX, 2);
+    lv_obj_set_grid_cell(cancel_label, LV_GRID_ALIGN_START, 1, 3, LV_GRID_ALIGN_START, POS_MAX + 3, 2);
 
+    update_sent_preview();
     update_visibility();
 
     return page;
@@ -225,8 +289,8 @@ static void page_elrs_on_click(uint8_t key, int sel) {
         update_visibility();
     } else if (sel == POS_VTX) // Send VTX freq
     {
-        if (msp_channel_update() && vtx_sent_osd_wanted(true)) {
-            channel_osd_sent = CHANNEL_SHOWTIME;
+        if (msp_channel_update()) {
+            vtx_sent_osd_show(true);
         }
     } else if (sel == POS_VTX_CTRL) // master switch: may VTX commands be sent at all
     {
@@ -244,6 +308,13 @@ static void page_elrs_on_click(uint8_t key, int sel) {
         btn_group_toggle_sel(&sent_osd_group);
         g_setting.elrs.vtx_sent_osd = btn_group_get_sel(&sent_osd_group);
         ini_putl("elrs", "vtx_sent_osd", g_setting.elrs.vtx_sent_osd, SETTING_INI);
+        update_sent_preview();
+    } else if (sel == POS_SENT_STYLE) // how the banner looks
+    {
+        btn_group_toggle_sel(&sent_style_group);
+        g_setting.elrs.vtx_sent_style = btn_group_get_sel(&sent_style_group);
+        ini_putl("elrs", "vtx_sent_style", g_setting.elrs.vtx_sent_style, SETTING_INI);
+        update_sent_preview();
     } else if (sel == POS_WIFI) // start ESP Wifi
     {
         snprintf(buf, sizeof(buf), "%s...", _lang("Starting"));

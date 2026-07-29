@@ -118,6 +118,7 @@ const setting_t g_setting_defaults = {
         .vtx_send_enable = true,
         .auto_send_vtx = false,
         .vtx_sent_osd = SETTING_VTX_SENT_OSD_ALWAYS,
+        .vtx_sent_style = SETTING_VTX_SENT_STYLE_NORMAL,
     },
     .ease = {
         .no_dial = 0,
@@ -626,6 +627,9 @@ void settings_load(void) {
     g_setting.elrs.vtx_sent_osd = ini_getl("elrs", "vtx_sent_osd", g_setting_defaults.elrs.vtx_sent_osd, SETTING_INI);
     if (g_setting.elrs.vtx_sent_osd > SETTING_VTX_SENT_OSD_OFF)
         g_setting.elrs.vtx_sent_osd = SETTING_VTX_SENT_OSD_ALWAYS;
+    g_setting.elrs.vtx_sent_style = ini_getl("elrs", "vtx_sent_style", g_setting_defaults.elrs.vtx_sent_style, SETTING_INI);
+    if (g_setting.elrs.vtx_sent_style > SETTING_VTX_SENT_STYLE_SUBTLE)
+        g_setting.elrs.vtx_sent_style = SETTING_VTX_SENT_STYLE_NORMAL;
 
     // clock
     g_setting.clock.year = ini_getl("clock", "year", g_setting_defaults.clock.year, SETTING_INI);

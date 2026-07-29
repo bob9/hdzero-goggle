@@ -553,7 +553,18 @@ void osd_channel_show(bool bShow) {
     if (channel_osd_sent) {
         bool const is_hdz = g_source_info.source == SOURCE_HDZERO;
         uint8_t const sch = (is_hdz ? g_setting.scan.channel : g_setting.source.analog_channel) & 0x7F;
-        snprintf(buf, sizeof(buf), "  %s  VTX SENT  ", channel2str(is_hdz, g_setting.source.hdzero_band, sch));
+        if (g_setting.elrs.vtx_sent_style == SETTING_VTX_SENT_STYLE_SUBTLE) {
+            // No pill: the overlay chroma-keys pure black through to video, so
+            // a hidden background means the text floats straight over the
+            // picture. Dimmer green and no channel prefix keep it small.
+            snprintf(buf, sizeof(buf), "VTX SENT");
+            lv_obj_set_style_bg_opa(g_osd_hdzero.vtx_sent[is_fhd], LV_OPA_TRANSP, 0);
+            lv_obj_set_style_text_color(g_osd_hdzero.vtx_sent[is_fhd], lv_color_make(0x00, 0xB0, 0x00), 0);
+        } else {
+            snprintf(buf, sizeof(buf), "  %s  VTX SENT  ", channel2str(is_hdz, g_setting.source.hdzero_band, sch));
+            lv_obj_set_style_bg_opa(g_osd_hdzero.vtx_sent[is_fhd], LV_OPA_100, 0);
+            lv_obj_set_style_text_color(g_osd_hdzero.vtx_sent[is_fhd], lv_color_make(0x00, 0xFF, 0x00), 0);
+        }
         lv_label_set_text(g_osd_hdzero.vtx_sent[is_fhd], buf);
         lv_obj_clear_flag(g_osd_hdzero.vtx_sent[is_fhd], LV_OBJ_FLAG_HIDDEN);
     } else {

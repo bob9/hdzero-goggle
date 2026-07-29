@@ -169,6 +169,10 @@ typedef struct {
     // press, the Send VTX button action, or Send VTX on the ELRS page; with
     // Auto Send VTX on, a plain dial click is not deliberate.
     uint8_t vtx_sent_osd;
+    // How the banner looks. Independent of vtx_sent_osd: "only on a long
+    // press" and "keep it subtle" are separate wishes, so they are separate
+    // settings rather than one conflated list.
+    uint8_t vtx_sent_style;
 } setting_elrs_t;
 
 typedef enum {
@@ -176,6 +180,11 @@ typedef enum {
     SETTING_VTX_SENT_OSD_DELIBERATE = 1, // only long press / explicit Send VTX
     SETTING_VTX_SENT_OSD_OFF = 2,        // never
 } setting_vtx_sent_osd_t;
+
+typedef enum {
+    SETTING_VTX_SENT_STYLE_NORMAL = 0, // channel + label, green on a black pill
+    SETTING_VTX_SENT_STYLE_SUBTLE = 1, // label only, dim green, no pill, brief
+} setting_vtx_sent_style_t;
 
 typedef enum {
     EMBEDDED_4x3,

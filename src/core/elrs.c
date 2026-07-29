@@ -683,11 +683,21 @@ bool vtx_sent_osd_wanted(bool deliberate) {
     }
 }
 
+// Raise the confirmation for this send, if the settings want it. Single
+// entry point so the four send sites cannot drift apart.
+void vtx_sent_osd_show(bool deliberate) {
+    if (!vtx_sent_osd_wanted(deliberate))
+        return;
+    channel_osd_sent = (g_setting.elrs.vtx_sent_style == SETTING_VTX_SENT_STYLE_SUBTLE)
+                           ? CHANNEL_SHOWTIME_SUBTLE
+                           : CHANNEL_SHOWTIME;
+}
+
 // Re-send the current VTX channel to the backpack and show the
 // "VTX SENT" OSD confirmation. Assignable to a button on the Input page.
 void elrs_send_vtx() {
-    if (msp_channel_update() && vtx_sent_osd_wanted(true)) {
-        channel_osd_sent = CHANNEL_SHOWTIME;
+    if (msp_channel_update()) {
+        vtx_sent_osd_show(true);
     }
 }
 

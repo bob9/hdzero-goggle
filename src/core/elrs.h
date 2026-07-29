@@ -96,6 +96,7 @@ void msp_ht_update(uint16_t pan, uint16_t tilt, uint16_t roll);
 bool msp_channel_update();
 void elrs_send_vtx();
 bool vtx_sent_osd_wanted(bool deliberate);
+void vtx_sent_osd_show(bool deliberate);
 
 #ifdef __cplusplus
 }

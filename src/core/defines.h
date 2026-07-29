@@ -3,6 +3,7 @@
 #define DIAL_SENSITIVITY           1    // number of clicks before dial event is triggered
 #define DIAL_SENSITIVTY_TIMEOUT_MS 1000 // ms
 #define CHANNEL_SHOWTIME           30   // must <= 127
+#define CHANNEL_SHOWTIME_SUBTLE    10   // brief flash for the subtle VTX SENT style
 
 #define GPIO_BEEP 131
 
