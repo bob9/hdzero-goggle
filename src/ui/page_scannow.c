@@ -609,57 +609,6 @@ static void user_clear_signal(void) {
 }
 
 
-static int8_t scan_now_hdzero(void) {
-    uint8_t ch, gain;
-    bool valid;
-    uint8_t valid_index;
-    char buf[128];
-
-    snprintf(buf, sizeof(buf), "%s...", _lang("Scanning"));
-    lv_label_set_text(label, buf);
-    lv_bar_set_value(progressbar, 0, LV_ANIM_OFF);
-    lv_timer_handler();
-    lv_bar_set_value(progressbar, 2, LV_ANIM_OFF);
-    lv_timer_handler();
-
-    // clear
-    for (ch = 0; ch < BASE_CH_NUM; ch++) {
-        valid_channel_tb[ch] = -1;
-        channel_status_tb[ch].is_valid = 0;
-    }
-
-    HDZero_open(g_setting.source.hdzero_bw);
-    lv_bar_set_value(progressbar, 4, LV_ANIM_OFF);
-    lv_timer_handler();
-
-    for (ch = 0; ch < HDZERO_CHANNEL_NUM; ch++) {
-        scan_probe_hdzero(g_setting.source.hdzero_band, ch, &gain, &valid);
-        if (valid) {
-            channel_status_tb[ch].is_valid = 1;
-            channel_status_tb[ch].gain = gain;
-            set_signal_bar(&channel_tb[ch], channel_status_tb[ch].is_valid, channel_status_tb[ch].gain);
-        }
-        lv_bar_set_value(progressbar, ch + 5, LV_ANIM_OFF);
-        lv_timer_handler();
-    }
-    lv_bar_set_value(progressbar, 14, LV_ANIM_OFF);
-
-    valid_index = 0;
-    for (ch = 0; ch < HDZERO_CHANNEL_NUM; ch++) {
-        if (channel_status_tb[ch].is_valid) {
-            valid_channel_tb[valid_index++] = ch;
-        }
-
-        lv_timer_handler();
-    }
-
-    user_select_signal();
-    lv_label_set_text(label, _lang("Scanning done"));
-    if (!valid_index)
-        return -1;
-    else
-        return valid_index;
-}
 
 #if defined(HDZBOXPRO) || defined(HDZGOGGLE2) || defined(HDZGOGGLE)
 static int compare_results_desc(const void *a, const void *b) {
