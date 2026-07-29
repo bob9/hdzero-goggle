@@ -523,28 +523,14 @@ static void dvr_update_record_conf() {
     // permits, so with only a ceiling and no floor the encoder is free to
     // degrade indefinitely to stay under it. 40 bounds that; CBR keeps 52
     // because there the encoder must fill the target anyway.
-    int vbr_quality = 0;
-    switch (g_setting.record.rc_mode) {
-    case SETTING_RECORD_RC_VBR_Q2:
-        vbr_quality = 2;
-        break;
-    case SETTING_RECORD_RC_VBR_Q6:
-        vbr_quality = 6;
-        break;
-    case SETTING_RECORD_RC_VBR_Q10:
-        vbr_quality = 10;
-        break;
-    case SETTING_RECORD_RC_CBR:
-    default:
-        break;
-    }
+    bool const use_vbr = (g_setting.record.rc_mode == SETTING_RECORD_RC_VBR);
 
-    ini_putl("venc", "rc", vbr_quality ? 1 : 0, REC_CONF);
+    ini_putl("venc", "rc", use_vbr ? 1 : 0, REC_CONF);
     for (int i = 0; i < 2; i++) {
         const char *sec = i ? "h265" : "h264";
-        if (vbr_quality) {
-            ini_putl(sec, "quality", vbr_quality, REC_CONF);
-            ini_putl(sec, "maxQP", 40, REC_CONF);
+        if (use_vbr) {
+            ini_putl(sec, "quality", g_setting.record.vbr_quality, REC_CONF);
+            ini_putl(sec, "maxQP", g_setting.record.vbr_max_qp, REC_CONF);
         } else {
             ini_putl(sec, "maxQP", 52, REC_CONF); // stock
         }

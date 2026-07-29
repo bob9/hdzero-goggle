@@ -112,11 +112,22 @@ typedef enum {
 // 0-13 scale; the direction is undocumented, so three values are exposed to
 // compare rather than one guessed default.
 typedef enum {
-    SETTING_RECORD_RC_CBR = 0,     // stock behaviour, the default
-    SETTING_RECORD_RC_VBR_Q2 = 1,  // VBR, quality 2
-    SETTING_RECORD_RC_VBR_Q6 = 2,  // VBR, quality 6
-    SETTING_RECORD_RC_VBR_Q10 = 3, // VBR, quality 10
+    SETTING_RECORD_RC_CBR = 0, // stock behaviour, the default
+    SETTING_RECORD_RC_VBR = 1,
 } setting_record_rc_t;
+
+// The encoder's own quality scale for VBR. Its direction is undocumented, so
+// the full range is exposed rather than a few guessed presets.
+#define VBR_QUALITY_MIN 0
+#define VBR_QUALITY_MAX 13
+
+// Quality floor for VBR: the worst QP the encoder may fall back to in order
+// to stay under the bitrate ceiling. Lower = better worst-case picture, but
+// the ceiling gets hit more often so files grow. The stock config uses 52,
+// the worst QP H.264 permits, which under VBR means no floor at all.
+// 40 is the recommended starting point, not a measured optimum.
+#define VBR_MAX_QP_RECOMMENDED 40
+#define VBR_MAX_QP_MAX         52
 
 typedef enum {
     SETTING_NAMING_CONTIGUOUS,
@@ -136,7 +147,9 @@ typedef struct {
     int mic_gain;
     int linein_gain;
     setting_record_naming_t naming;
-    uint8_t rc_mode; // setting_record_rc_t
+    uint8_t rc_mode;     // setting_record_rc_t
+    uint8_t vbr_quality; // 0..13, only consulted when rc_mode is VBR
+    uint8_t vbr_max_qp;  // quality floor for VBR, see VBR_MAX_QP_RECOMMENDED
     uint8_t stop_delay_seconds; // auto record: grace period after signal loss before stopping (0 = off)
 } setting_record_t;
 

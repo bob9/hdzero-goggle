@@ -60,6 +60,8 @@ const setting_t g_setting_defaults = {
         .format_ts = true,
         .bitrate_scale = SETTING_RECORD_BITRATE_SCALE_NORMAL,
         .rc_mode = SETTING_RECORD_RC_CBR,
+        .vbr_quality = 6,
+        .vbr_max_qp = VBR_MAX_QP_RECOMMENDED,
         .osd = true,
         .audio = true,
         .audio_source = SETTING_RECORD_AUDIO_SOURCE_MIC,
@@ -541,8 +543,22 @@ void settings_load(void) {
     g_setting.record.format_ts = settings_get_bool("record", "format_ts", g_setting_defaults.record.format_ts);
     g_setting.record.bitrate_scale = ini_getl("record", "bitrate_scale", g_setting_defaults.record.bitrate_scale, SETTING_INI);
     g_setting.record.rc_mode = ini_getl("record", "rc_mode", g_setting_defaults.record.rc_mode, SETTING_INI);
-    if (g_setting.record.rc_mode > SETTING_RECORD_RC_VBR_Q10)
-        g_setting.record.rc_mode = SETTING_RECORD_RC_CBR;
+    g_setting.record.vbr_quality = ini_getl("record", "vbr_quality", g_setting_defaults.record.vbr_quality, SETTING_INI);
+    // 9.5.43/44 packed the quality into rc_mode as 1=q2, 2=q6, 3=q10. Carry
+    // those forward rather than silently dropping anyone back to CBR.
+    if (g_setting.record.rc_mode > SETTING_RECORD_RC_VBR) {
+        static const uint8_t legacy_q[] = {0, 2, 6, 10};
+        uint8_t const old = g_setting.record.rc_mode;
+        g_setting.record.vbr_quality = (old < 4) ? legacy_q[old] : g_setting_defaults.record.vbr_quality;
+        g_setting.record.rc_mode = SETTING_RECORD_RC_VBR;
+        ini_putl("record", "rc_mode", g_setting.record.rc_mode, SETTING_INI);
+        ini_putl("record", "vbr_quality", g_setting.record.vbr_quality, SETTING_INI);
+    }
+    if (g_setting.record.vbr_quality > VBR_QUALITY_MAX)
+        g_setting.record.vbr_quality = g_setting_defaults.record.vbr_quality;
+    g_setting.record.vbr_max_qp = ini_getl("record", "vbr_max_qp", g_setting_defaults.record.vbr_max_qp, SETTING_INI);
+    if (g_setting.record.vbr_max_qp > VBR_MAX_QP_MAX)
+        g_setting.record.vbr_max_qp = g_setting_defaults.record.vbr_max_qp;
     g_setting.record.osd = settings_get_bool("record", "osd", g_setting_defaults.record.osd);
     g_setting.record.audio = settings_get_bool("record", "audio", g_setting_defaults.record.audio);
     g_setting.record.audio_source = ini_getl("record", "audio_source", g_setting_defaults.record.audio_source, SETTING_INI);
