@@ -29,6 +29,7 @@
 #include "ui/page_power.h"
 #include "ui/page_record.h"
 #include "ui/page_scannow.h"
+#include "ui/page_shutdown.h"
 #include "ui/page_sleep.h"
 #include "ui/page_source.h"
 #include "ui/page_storage.h"
@@ -340,6 +341,7 @@ void main_menu_init(void) {
     page_packs[page_packs_count++] = &pp_analog_rssi;
 #endif
     page_packs[page_packs_count++] = &pp_sleep;
+    page_packs[page_packs_count++] = &pp_shutdown;
 
     menu = lv_menu_create(lv_scr_act());
     lv_obj_clear_flag(menu, LV_OBJ_FLAG_SCROLLABLE);
