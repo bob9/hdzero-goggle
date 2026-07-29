@@ -1208,6 +1208,10 @@ int HDMI_in_detect() {
     return ret;
 }
 
+void Display_Osd_DumpRegs(const char *tag) {
+    (void)tag; // hwlog is a Goggle One facility
+}
+
 void Display_Osd(bool enable) {
     I2C_Write(ADDR_FPGA, 0x84, enable ? 0x11 : 0x01);
 }

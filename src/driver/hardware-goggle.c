@@ -1445,8 +1445,32 @@ int HDMI_in_detect() {
     return ret;
 }
 
+// Dump the FPGA display/overlay register block to the SD log. These are
+// readable (dm6302.c and self_test.c already read FPGA regs) but nobody had
+// looked at them, so the record-OSD hunt was blind. Logging the block live -
+// with the DVR running - shows which bits actually hold the value written and
+// which read back different, which is what identifies the real control.
+void Display_Osd_DumpRegs(const char *tag) {
+    char line[160];
+    int n = 0;
+
+    pthread_mutex_lock(&hardware_mutex);
+    for (uint8_t a = 0x80; a <= 0x8F; a++) {
+        n += snprintf(line + n, sizeof(line) - n, "%02x:%02x ", a,
+                      I2C_Read(ADDR_FPGA, a));
+        if (n >= (int)sizeof(line) - 8)
+            break;
+    }
+    pthread_mutex_unlock(&hardware_mutex);
+
+    hwlog("fpga %s | %s", tag ? tag : "", line);
+    LOGI("fpga %s | %s", tag ? tag : "", line);
+}
+
 void Display_Osd(bool enable) {
     I2C_Write(ADDR_FPGA, 0x84, enable ? 0x11 : 0x01);
+    hwlog("Display_Osd(%d) -> 0x84 = 0x%02x, reads back 0x%02x", enable,
+          enable ? 0x11 : 0x01, I2C_Read(ADDR_FPGA, 0x84));
 }
 
 // Record-OSD probe. "Record OSD: No" writes 0x84=0x01 and is reported to
@@ -1480,9 +1504,17 @@ static int osd_probe_idx = 0;
 void Display_Osd_ProbeNext(void) {
     osd_probe_idx = (osd_probe_idx + 1) % OSD_PROBE_COUNT;
 
+    Display_Osd_DumpRegs("before");
+
     pthread_mutex_lock(&hardware_mutex);
     I2C_Write(ADDR_FPGA, 0x84, osd_probe_val[osd_probe_idx]);
+    uint8_t const readback = I2C_Read(ADDR_FPGA, 0x84);
     pthread_mutex_unlock(&hardware_mutex);
+
+    Display_Osd_DumpRegs("after");
+    hwlog("osd probe wrote 0x%02x, 0x84 reads back 0x%02x%s",
+          osd_probe_val[osd_probe_idx], readback,
+          readback == osd_probe_val[osd_probe_idx] ? "" : "  <-- DID NOT STICK");
 
     hwlog("osd probe %d/%d: 0x84 = 0x%02x (record.osd setting = %d)",
           osd_probe_idx, OSD_PROBE_COUNT - 1, osd_probe_val[osd_probe_idx],

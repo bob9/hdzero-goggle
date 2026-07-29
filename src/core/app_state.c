@@ -172,6 +172,7 @@ void app_switch_to_hdmi_in() {
 
     osd_show(true);
     osd_clear();
+    Display_Osd(g_setting.record.osd);
     lv_timer_handler();
 
     // update vi conf at HDMI_in_detect()

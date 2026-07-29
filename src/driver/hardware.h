@@ -124,6 +124,10 @@ void Display_Osd(bool enable);
 // nothing calls it unless the pilot binds it.
 void Display_Osd_ProbeNext(void);
 
+// Dump FPGA 0x80-0x8F to the SD log with a caller-supplied tag. Goggle One
+// only; a no-op elsewhere, since hwlog is a G1 facility.
+void Display_Osd_DumpRegs(const char *tag);
+
 void Set_Brightness(uint8_t bri);
 void Set_Contrast(uint8_t con);
 void Set_Saturation(uint8_t sat);

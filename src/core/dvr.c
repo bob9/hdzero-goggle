@@ -553,6 +553,14 @@ void dvr_cmd(osd_dvr_cmd_t cmd) {
     if (start_rec) {
         if (!dvr_is_recording && !sdcard_is_full()) {
             dvr_update_record_conf();
+            // Re-assert the record-OSD bit here, not just on source entry.
+            // Display_UI_init() forces 0x84 back to "OSD on" every time the
+            // menu or the playback page brings the UI up, so anything that
+            // re-inits the display between entering video and hitting record
+            // would otherwise leave the setting stale for the whole clip.
+            // Writing the user's own value is a no-op when nothing clobbered it.
+            Display_Osd(g_setting.record.osd);
+            Display_Osd_DumpRegs("rec start");
             if (g_sdcard_ready) {
                 dvr_is_recording = true;
                 record_pending = false;
