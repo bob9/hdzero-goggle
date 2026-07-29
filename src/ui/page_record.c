@@ -29,6 +29,7 @@ enum {
     ROW_RECORD_MODE = 0,
     ROW_RECORD_FORMAT,
     ROW_RECORD_BITRATE,
+    ROW_RECORD_BITRATE_WRAP, // 5 bitrate buttons wrap onto a second grid row
     ROW_RECORD_OSD,
     ROW_NAMING_SCHEME,
     ROW_STOP_DELAY,
@@ -42,6 +43,26 @@ static bool stop_delay_changed = false;
 
 static lv_coord_t col_dsc[] = {UI_RECORD_COLS};
 static lv_coord_t row_dsc[] = {UI_RECORD_ROWS};
+
+// The Record Bitrate buttons read low-to-high after Normal, but the stored
+// enum values are frozen for backward compatibility, so the menu order and
+// the setting value are not the same thing. These map between them.
+static const setting_record_bitrate_scale_t bitrate_btn_to_setting[] = {
+    SETTING_RECORD_BITRATE_SCALE_NORMAL,
+    SETTING_RECORD_BITRATE_SCALE_QUARTER,
+    SETTING_RECORD_BITRATE_SCALE_HALF,
+    SETTING_RECORD_BITRATE_SCALE_HIGH,
+    SETTING_RECORD_BITRATE_SCALE_MAX,
+};
+#define BITRATE_BTN_COUNT (int)(sizeof(bitrate_btn_to_setting) / sizeof(bitrate_btn_to_setting[0]))
+
+static int bitrate_setting_to_btn(setting_record_bitrate_scale_t v) {
+    for (int i = 0; i < BITRATE_BTN_COUNT; i++) {
+        if (bitrate_btn_to_setting[i] == v)
+            return i;
+    }
+    return 0; // unknown value in settings.ini -> Normal
+}
 
 static void update_stop_delay_label() {
     char buf[16];
@@ -92,7 +113,13 @@ static lv_obj_t *page_record_create(lv_obj_t *parent, panel_arr_t *arr) {
 
     create_btn_group_item(&btn_group_record_mode, cont, 2, _lang("Record Mode"), _lang("Auto"), _lang("Manual"), "", "", ROW_RECORD_MODE);
     create_btn_group_item(&btn_group_format, cont, 2, _lang("Record Format"), "MP4", "TS", "", "", ROW_RECORD_FORMAT);
-    create_btn_group_item(&btn_group_bitrate_scale, cont, 3, _lang("Record Bitrate"), _lang("Normal"), "1.5x", "2x", "", ROW_RECORD_BITRATE);
+    // 5 buttons wrap onto a second grid row: stretch the selection panel over
+    // both and take the absorbed row out of the navigation.
+    create_btn_group_item2(&btn_group_bitrate_scale, cont, BITRATE_BTN_COUNT, _lang("Record Bitrate"),
+                           _lang("Normal"), "1/4", "1/2", "1.5x", "2x", " ", ROW_RECORD_BITRATE);
+    lv_obj_set_grid_cell(arr->panel[ROW_RECORD_BITRATE], LV_GRID_ALIGN_STRETCH, 0, 6,
+                         LV_GRID_ALIGN_STRETCH, ROW_RECORD_BITRATE, 2);
+    lv_obj_clear_flag(arr->panel[ROW_RECORD_BITRATE_WRAP], FLAG_SELECTABLE);
     create_btn_group_item(&btn_group_record_osd, cont, 2, _lang("Record OSD"), _lang("Yes"), _lang("No"), "", "", ROW_RECORD_OSD);
     create_btn_group_item(&btn_group_file_naming, cont, 3, _lang("Naming Scheme"), _lang("Digits"), _lang("Date"), "ELRS", "", ROW_NAMING_SCHEME);
     create_slider_item(&slider_group_stop_delay, cont, _lang("Auto DVR Stop Delay"), STOP_DELAY_MAX, g_setting.record.stop_delay_seconds, ROW_STOP_DELAY);
@@ -103,7 +130,7 @@ static lv_obj_t *page_record_create(lv_obj_t *parent, panel_arr_t *arr) {
     snprintf(buf, sizeof(buf), "%s.\n%s.\n%s.",
              _lang("MP4 format requires properly closing files or the files will be corrupt"),
              _lang("TS format is highly recommended"),
-             _lang("Bitrate: Normal is the default; 1.5x/2x record higher quality but larger files and need a fast SD card"));
+             _lang("Bitrate: Normal is the default; 1/4 and 1/2 save card space, 1.5x/2x record higher quality but need a fast SD card"));
     lv_label_set_text(label2, buf);
     lv_obj_set_style_text_font(label2, UI_PAGE_LABEL_FONT, 0);
     lv_obj_set_style_text_align(label2, LV_TEXT_ALIGN_LEFT, 0);
@@ -115,7 +142,7 @@ static lv_obj_t *page_record_create(lv_obj_t *parent, panel_arr_t *arr) {
 
     btn_group_set_sel(&btn_group_record_mode, g_setting.record.mode_manual ? 1 : 0);
     btn_group_set_sel(&btn_group_format, g_setting.record.format_ts ? 1 : 0);
-    btn_group_set_sel(&btn_group_bitrate_scale, g_setting.record.bitrate_scale);
+    btn_group_set_sel(&btn_group_bitrate_scale, bitrate_setting_to_btn(g_setting.record.bitrate_scale));
     btn_group_set_sel(&btn_group_record_osd, g_setting.record.osd ? 0 : 1);
     btn_group_set_sel(&btn_group_file_naming, g_setting.record.naming);
     update_stop_delay_label();
@@ -184,7 +211,7 @@ static void page_record_on_click(uint8_t key, int sel) {
             ini_puts("record", "type", "mp4", REC_CONF);
     } else if (sel == ROW_RECORD_BITRATE) {
         btn_group_toggle_sel(&btn_group_bitrate_scale);
-        g_setting.record.bitrate_scale = btn_group_get_sel(&btn_group_bitrate_scale);
+        g_setting.record.bitrate_scale = bitrate_btn_to_setting[btn_group_get_sel(&btn_group_bitrate_scale)];
         ini_putl("record", "bitrate_scale", g_setting.record.bitrate_scale, SETTING_INI);
     } else if (sel == ROW_RECORD_OSD) {
         btn_group_toggle_sel(&btn_group_record_osd);

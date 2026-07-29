@@ -389,6 +389,14 @@ static void dvr_update_record_conf() {
         bitrate_num = 2;
         bitrate_den = 1;
         break;
+    case SETTING_RECORD_BITRATE_SCALE_HALF:
+        bitrate_num = 1;
+        bitrate_den = 2;
+        break;
+    case SETTING_RECORD_BITRATE_SCALE_QUARTER:
+        bitrate_num = 1;
+        bitrate_den = 4;
+        break;
     case SETTING_RECORD_BITRATE_SCALE_NORMAL:
     default:
         bitrate_num = 1;

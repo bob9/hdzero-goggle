@@ -95,9 +95,14 @@ typedef enum {
 } setting_record_audio_source_t;
 
 typedef enum {
-    SETTING_RECORD_BITRATE_SCALE_NORMAL = 0, // stock bitrate (default)
-    SETTING_RECORD_BITRATE_SCALE_HIGH = 1,   // 1.5x bitrate, larger files
-    SETTING_RECORD_BITRATE_SCALE_MAX = 2,    // 2x bitrate, largest files
+    // Values are stable on purpose - a saved bitrate_scale must keep meaning
+    // the same thing across updates, so the smaller scales are appended
+    // rather than inserted in menu order.
+    SETTING_RECORD_BITRATE_SCALE_NORMAL = 0,  // stock bitrate (default)
+    SETTING_RECORD_BITRATE_SCALE_HIGH = 1,    // 1.5x bitrate, larger files
+    SETTING_RECORD_BITRATE_SCALE_MAX = 2,     // 2x bitrate, largest files
+    SETTING_RECORD_BITRATE_SCALE_QUARTER = 3, // 1/4 bitrate, smallest files
+    SETTING_RECORD_BITRATE_SCALE_HALF = 4,    // 1/2 bitrate, smaller files
 } setting_record_bitrate_scale_t;
 
 typedef enum {
