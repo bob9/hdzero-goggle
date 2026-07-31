@@ -1,0 +1,47 @@
+#pragma once
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <stdbool.h>
+#include <stddef.h>
+
+/**
+ * Minimal plain-HTTP client for LAN media servers (HTTP/1.0, Connection:
+ * close framing). Blocking with socket timeouts - callers run off the LVGL
+ * thread.
+ */
+
+typedef struct {
+    volatile bool cancel;
+    volatile long bytes;
+    volatile bool done;
+    volatile int result; // 0 ok, <0 failure (LANHTTP_ERR_*)
+} lan_stream_state_t;
+
+#define LANHTTP_ERR_NET   -1
+#define LANHTTP_ERR_AUTH  -2
+#define LANHTTP_ERR_PROTO -4
+
+/**
+ * Request with optional POST body (JSON) and optional extra header lines
+ * (each "\r\n"-terminated). On HTTP 200, *body_out is a malloc'd
+ * NUL-terminated response body. Returns the HTTP status, or <0 on network
+ * failure.
+ */
+int lanhttp_request(const char *host, int port, const char *method, const char *path,
+                    const char *extra_headers, const char *post_body,
+                    char **body_out, size_t *body_len_out);
+
+/**
+ * Stream a GET response body into dest_file while updating state - the
+ * same growing-file contract as plex_stream_download.
+ */
+int lanhttp_download(const char *host, int port, const char *path,
+                     const char *extra_headers, const char *dest_file,
+                     lan_stream_state_t *state);
+
+#ifdef __cplusplus
+}
+#endif

@@ -10,12 +10,14 @@
 
 #include <log/log.h>
 
+#include "core/jellyfinapi.h"
 #include "core/settings.h"
 
 typedef struct {
     plex_stream_state_t io;
     pthread_t thread;
     bool active;
+    int backend;
     char path[768];
     char session[24];
 } plexstream_t;
@@ -24,7 +26,11 @@ static plexstream_t g_stream;
 
 static void *plexstream_thread(void *arg) {
     (void)arg;
-    plex_stream_download(g_stream.path, PLEXSTREAM_FILE, &g_stream.io);
+    if (g_stream.backend == MEDIA_BACKEND_JELLYFIN) {
+        jf_stream_download(g_stream.path, PLEXSTREAM_FILE, &g_stream.io);
+    } else {
+        plex_stream_download(g_stream.path, PLEXSTREAM_FILE, &g_stream.io);
+    }
     return NULL;
 }
 
@@ -36,21 +42,26 @@ bool plexstream_begin(const plex_movie_t *movie, int offset_s, int max_kbps) {
     mkdir("/mnt/extsd/plexcache", 0755);
     unlink(PLEXSTREAM_FILE);
 
+    g_stream.backend = g_setting.plex.backend;
     snprintf(g_stream.session, sizeof(g_stream.session), "hdzg%08x", (unsigned)time(NULL));
 
-    // Universal transcode to a single continuous MPEG-TS HTTP stream.
-    // directStream=1 lets compatible H.264 video pass through as a cheap
-    // remux; anything else (HEVC, high bitrates) is transcoded to H.264.
-    snprintf(g_stream.path, sizeof(g_stream.path),
-             "/video/:/transcode/universal/start.ts"
-             "?path=%%2Flibrary%%2Fmetadata%%2F%s"
-             "&mediaIndex=0&partIndex=0"
-             "&protocol=http&container=mpegts"
-             "&videoCodec=h264&audioCodec=aac&audioBoost=100"
-             "&maxVideoBitrate=%d&videoQuality=100&videoResolution=1920x1080"
-             "&directPlay=0&directStream=1&subtitles=none&fastSeek=1"
-             "&offset=%d&session=%s",
-             movie->rating_key, max_kbps, offset_s, g_stream.session);
+    if (g_stream.backend == MEDIA_BACKEND_JELLYFIN) {
+        jf_stream_path(g_stream.path, sizeof(g_stream.path), movie, offset_s, max_kbps);
+    } else {
+        // Universal transcode to a single continuous MPEG-TS HTTP stream.
+        // directStream=1 lets compatible H.264 video pass through as a cheap
+        // remux; anything else (HEVC, high bitrates) is transcoded to H.264.
+        snprintf(g_stream.path, sizeof(g_stream.path),
+                 "/video/:/transcode/universal/start.ts"
+                 "?path=%%2Flibrary%%2Fmetadata%%2F%s"
+                 "&mediaIndex=0&partIndex=0"
+                 "&protocol=http&container=mpegts"
+                 "&videoCodec=h264&audioCodec=aac&audioBoost=100"
+                 "&maxVideoBitrate=%d&videoQuality=100&videoResolution=1920x1080"
+                 "&directPlay=0&directStream=1&subtitles=none&fastSeek=1"
+                 "&offset=%d&session=%s",
+                 movie->rating_key, max_kbps, offset_s, g_stream.session);
+    }
 
     memset(&g_stream.io, 0, sizeof(g_stream.io));
     if (pthread_create(&g_stream.thread, NULL, plexstream_thread, NULL) != 0) {
@@ -58,7 +69,8 @@ bool plexstream_begin(const plex_movie_t *movie, int offset_s, int max_kbps) {
         return false;
     }
     g_stream.active = true;
-    LOGI("plexstream: session %s started for %s at %ds", g_stream.session, movie->rating_key, offset_s);
+    LOGI("plexstream: session %s started for %s at %ds (backend %d)",
+         g_stream.session, movie->rating_key, offset_s, g_stream.backend);
     return true;
 }
 
@@ -87,10 +99,13 @@ void plexstream_stop(void) {
     pthread_join(g_stream.thread, NULL);
     g_stream.active = false;
 
-    // Best effort: release the server's transcoder promptly
-    char path[128];
-    snprintf(path, sizeof(path), "/video/:/transcode/universal/stop?session=%s", g_stream.session);
-    plex_server_request(path);
+    if (g_stream.backend != MEDIA_BACKEND_JELLYFIN) {
+        // Best effort: release the server's transcoder promptly (Jellyfin
+        // reaps its transcode when the connection drops)
+        char path[128];
+        snprintf(path, sizeof(path), "/video/:/transcode/universal/stop?session=%s", g_stream.session);
+        plex_server_request(path);
+    }
 
     unlink(PLEXSTREAM_FILE);
     LOGI("plexstream: session %s stopped", g_stream.session);

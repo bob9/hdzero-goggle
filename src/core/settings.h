@@ -387,12 +387,25 @@ typedef struct {
 #define PLEX_TOKEN_MAX    64
 #define PLEX_CLIENTID_MAX 33
 
+typedef enum {
+    MEDIA_BACKEND_PLEX = 0,
+    MEDIA_BACKEND_JELLYFIN = 1,
+} media_backend_t;
+
 typedef struct {
     char host[PLEX_HOST_MAX];
     int port;
     char token[PLEX_TOKEN_MAX];
     char client_id[PLEX_CLIENTID_MAX];
+    int backend; // media_backend_t: which server type the saved host is
 } setting_plex_t;
+
+typedef struct {
+    char host[PLEX_HOST_MAX];
+    int port; // default 8096
+    char token[PLEX_TOKEN_MAX];
+    char user_id[40];
+} setting_jellyfin_t;
 
 typedef struct {
     setting_scan_t scan;
@@ -413,6 +426,7 @@ typedef struct {
     language_t language;
     setting_analog_rssi_t analog_rssi;
     setting_plex_t plex;
+    setting_jellyfin_t jellyfin;
     bool has_all_features;
 } setting_t;
 

@@ -14,6 +14,7 @@
 
 #include "core/app_state.h"
 #include "core/common.hh"
+#include "core/jellyfinapi.h"
 #include "core/plexapi.h"
 #include "core/plexstream.h"
 #include "core/settings.h"
@@ -161,6 +162,42 @@ static plex_page_state_t g_plex;
 static const lv_coord_t page_wh[] = {UI_PAGE_VIEW_SIZE};
 
 /**
+ * Active backend indirection: the saved server is either Plex or Jellyfin;
+ * everything downstream (posters, sign-in, streaming) branches here.
+ */
+static bool backend_is_jf(void) {
+    return g_setting.plex.backend == MEDIA_BACKEND_JELLYFIN;
+}
+
+static const char *active_host(void) {
+    return backend_is_jf() ? g_setting.jellyfin.host : g_setting.plex.host;
+}
+
+static int active_port(void) {
+    return backend_is_jf() ? g_setting.jellyfin.port : g_setting.plex.port;
+}
+
+static const char *active_token(void) {
+    return backend_is_jf() ? g_setting.jellyfin.token : g_setting.plex.token;
+}
+
+static const char *active_name(void) {
+    return backend_is_jf() ? "Jellyfin" : "Plex";
+}
+
+static bool active_token_from_sdcard(void) {
+    return backend_is_jf() ? jf_token_from_sdcard() : plex_token_from_sdcard();
+}
+
+static bool active_poster_cached(const plex_movie_t *m, char *path, int size) {
+    return backend_is_jf() ? jf_poster_cached(m, path, size) : plex_poster_cached(m, path, size);
+}
+
+static int active_fetch_poster(const plex_movie_t *m, int w, int h, char *path, int size) {
+    return backend_is_jf() ? jf_fetch_poster(m, w, h, path, size) : plex_fetch_poster(m, w, h, path, size);
+}
+
+/**
  * Worker thread: every network call lives here, never on the LVGL thread.
  */
 static void *plex_worker_thread(void *arg) {
@@ -179,6 +216,9 @@ static void *plex_worker_thread(void *arg) {
         case PLEX_JOB_DISCOVER: {
             plex_server_t servers[PLEX_SERVERS_MAX];
             int n = plex_gdm_discover(servers, PLEX_SERVERS_MAX);
+            if (n < PLEX_SERVERS_MAX) {
+                n += jf_discover(servers + n, PLEX_SERVERS_MAX - n);
+            }
 
             pthread_mutex_lock(&g_work.lock);
             if (gen == g_work.gen) {
@@ -195,15 +235,30 @@ static void *plex_worker_thread(void *arg) {
             char title[64] = "";
             plex_movie_t *movies = NULL;
             int count = 0;
+            int rc;
 
-            int rc = plex_server_reachable(g_setting.plex.host, g_setting.plex.port)
+            if (backend_is_jf()) {
+                rc = jf_server_reachable(g_setting.jellyfin.host, g_setting.jellyfin.port)
                          ? PLEX_OK
                          : PLEX_ERR_NET;
-            if (rc == PLEX_OK) {
-                rc = plex_find_movie_section(key, sizeof(key), title, sizeof(title));
-            }
-            if (rc == PLEX_OK) {
-                rc = plex_load_movies(key, &movies, &count, &g_work.progress);
+                if (rc == PLEX_OK) {
+                    if (!g_setting.jellyfin.token[0]) {
+                        rc = PLEX_ERR_AUTH; // no token yet: go to Quick Connect
+                    } else {
+                        snprintf(title, sizeof(title), "Movies");
+                        rc = jf_load_movies(&movies, &count, &g_work.progress);
+                    }
+                }
+            } else {
+                rc = plex_server_reachable(g_setting.plex.host, g_setting.plex.port)
+                         ? PLEX_OK
+                         : PLEX_ERR_NET;
+                if (rc == PLEX_OK) {
+                    rc = plex_find_movie_section(key, sizeof(key), title, sizeof(title));
+                }
+                if (rc == PLEX_OK) {
+                    rc = plex_load_movies(key, &movies, &count, &g_work.progress);
+                }
             }
 
             pthread_mutex_lock(&g_work.lock);
@@ -239,10 +294,10 @@ static void *plex_worker_thread(void *arg) {
                 bool fetched = false;
                 for (int i = 0; i < count; i++) {
                     char path[300];
-                    if (!wanted[i].thumb[0] || plex_poster_cached(&wanted[i], path, sizeof(path))) {
+                    if (!wanted[i].thumb[0] || active_poster_cached(&wanted[i], path, sizeof(path))) {
                         continue;
                     }
-                    plex_fetch_poster(&wanted[i], POSTER_W, POSTER_H, path, sizeof(path));
+                    active_fetch_poster(&wanted[i], POSTER_W, POSTER_H, path, sizeof(path));
                     fetched = true;
                     break;
                 }
@@ -255,8 +310,11 @@ static void *plex_worker_thread(void *arg) {
 
         case PLEX_JOB_PIN: {
             char code[12] = "";
+            char secret[128] = "";
             int pin_id = 0;
-            int rc = plex_pin_start(&pin_id, code, sizeof(code));
+            bool jf = backend_is_jf();
+            int rc = jf ? jf_quickconnect_start(code, sizeof(code), secret, sizeof(secret))
+                        : plex_pin_start(&pin_id, code, sizeof(code));
 
             pthread_mutex_lock(&g_work.lock);
             if (gen != g_work.gen) {
@@ -286,7 +344,7 @@ static void *plex_worker_thread(void *arg) {
                     }
                 }
 
-                rc = plex_pin_poll(pin_id);
+                rc = jf ? jf_quickconnect_poll(secret) : plex_pin_poll(pin_id);
                 if (rc == PLEX_PENDING || rc == PLEX_ERR_NET) {
                     continue; // transient network blips keep polling
                 }
@@ -432,7 +490,8 @@ static void plex_state_setup(bool trigger_scan) {
     char buf[128];
     int row = 0;
     for (int i = 0; i < g_plex.rows_server_count && row < PLEX_SERVERS_MAX; i++, row++) {
-        snprintf(buf, sizeof(buf), "%s (%s:%d)",
+        snprintf(buf, sizeof(buf), "[%s] %s (%s:%d)",
+                 g_plex.rows_servers[i].backend == MEDIA_BACKEND_JELLYFIN ? "Jellyfin" : "Plex",
                  g_plex.rows_servers[i].name, g_plex.rows_servers[i].host, g_plex.rows_servers[i].port);
         plex_row_set(row, buf);
     }
@@ -454,7 +513,7 @@ static void plex_state_loading(void) {
     plex_enter_state_common();
     g_plex.state = PLEX_ST_LOADING;
     char buf[128];
-    snprintf(buf, sizeof(buf), "%s %s:%d", _lang("Plex - Connecting to"), g_setting.plex.host, g_setting.plex.port);
+    snprintf(buf, sizeof(buf), "%s - %s %s:%d", active_name(), _lang("Connecting to"), active_host(), active_port());
     plex_set_header(buf);
     plex_show_status(_lang("Connecting..."));
     plex_set_hint(_lang("Long press the Enter button to exit"));
@@ -465,9 +524,9 @@ static void plex_state_loading(void) {
 static void plex_state_loading(void);
 
 static void plex_state_link(void) {
-    // The zero-interaction path first: a plextoken.txt on the SD card signs
+    // The zero-interaction path first: a token file on the SD card signs
     // in without showing anything.
-    if (plex_token_from_sdcard()) {
+    if (active_token_from_sdcard()) {
         plex_state_loading();
         return;
     }
@@ -475,20 +534,32 @@ static void plex_state_link(void) {
     plex_enter_state_common();
     g_plex.state = PLEX_ST_LINK;
     g_plex.link_failed = false;
-    plex_set_header(_lang("Plex - Sign In"));
-    plex_show_status(_lang("Requesting a sign-in code from plex.tv..."));
+    char buf[96];
+    snprintf(buf, sizeof(buf), "%s - %s", active_name(), _lang("Sign In"));
+    plex_set_header(buf);
+    plex_show_status(backend_is_jf()
+                         ? _lang("Requesting a Quick Connect code from the server...")
+                         : _lang("Requesting a sign-in code from plex.tv..."));
     plex_set_hint(_lang("Click the dial to type a token instead. Long press the Enter button to exit"));
     plex_post_job(PLEX_JOB_PIN);
 }
 
 static void plex_link_show_code(const char *code) {
     char buf[512];
-    snprintf(buf, sizeof(buf),
-             "%s\n\n      plex.tv/link\n\n%s\n\n      %s\n\n%s",
-             _lang("On your phone or computer, go to:"),
-             _lang("sign in to your Plex account, and enter this code:"),
-             code,
-             _lang("This screen continues automatically once linked.\n(Alternatives: put plextoken.txt on the SD card,\nor click the dial to type a token.)"));
+    if (backend_is_jf()) {
+        snprintf(buf, sizeof(buf),
+                 "%s\n\n      %s\n\n%s",
+                 _lang("In any signed-in Jellyfin app or web page:\nclick your user icon -> Quick Connect,\nand enter this code:"),
+                 code,
+                 _lang("This screen continues automatically once approved.\n(Alternatives: put jellyfintoken.txt on the SD card,\nor click the dial to type an API key.)"));
+    } else {
+        snprintf(buf, sizeof(buf),
+                 "%s\n\n      plex.tv/link\n\n%s\n\n      %s\n\n%s",
+                 _lang("On your phone or computer, go to:"),
+                 _lang("sign in to your Plex account, and enter this code:"),
+                 code,
+                 _lang("This screen continues automatically once linked.\n(Alternatives: put plextoken.txt on the SD card,\nor click the dial to type a token.)"));
+    }
     plex_show_status(buf);
 }
 
@@ -510,7 +581,7 @@ static void plex_state_error(const char *msg) {
 
 static void plex_apply_poster(int i, const plex_movie_t *m) {
     char path[280];
-    if (plex_poster_cached(m, path, sizeof(path))) {
+    if (active_poster_cached(m, path, sizeof(path))) {
         char src[300];
         snprintf(src, sizeof(src), "A:%s", path);
         if (strcmp(src, g_plex.poster_src[i]) != 0) {
@@ -529,8 +600,8 @@ static void plex_grid_paint(void) {
     int page = g_plex.cur_sel / PLEX_PAGE_CNT;
     int pages = (g_plex.movie_count + PLEX_PAGE_CNT - 1) / PLEX_PAGE_CNT;
 
-    snprintf(buf, sizeof(buf), "Plex - %s  |  %d %s  |  %s %d/%d",
-             g_plex.section_title, g_plex.movie_count, _lang("movies"), _lang("page"), page + 1, pages);
+    snprintf(buf, sizeof(buf), "%s - %s  |  %d %s  |  %s %d/%d",
+             active_name(), g_plex.section_title, g_plex.movie_count, _lang("movies"), _lang("page"), page + 1, pages);
     plex_set_header(buf);
 
     for (int i = 0; i < PLEX_PAGE_CNT; i++) {
@@ -637,7 +708,7 @@ static void plex_start_playback(void) {
     plex_enter_state_common();
     g_plex.state = PLEX_ST_BUFFERING;
     char buf[160];
-    snprintf(buf, sizeof(buf), "%s %s", _lang("Plex - Preparing"), m->title);
+    snprintf(buf, sizeof(buf), "%s - %s %s", active_name(), _lang("Preparing"), m->title);
     plex_set_header(buf);
     plex_show_status(_lang("Asking the server for the stream..."));
     plex_set_hint(_lang("Click to cancel"));
@@ -756,11 +827,13 @@ static void plex_timer_cb(lv_timer_t *timer) {
         if (pin_failed) {
             g_plex.link_failed = true;
             if (!keyboard_active()) {
-                plex_show_status(_lang("Could not sign in via plex.tv (no internet, or the code expired).\n\nAlternatives that work offline:\n- put plextoken.txt on the SD card (picked up automatically)\n- click the dial to type a token\n- scroll to request a new plex.tv code"));
+                plex_show_status(backend_is_jf()
+                                     ? _lang("Could not get a Quick Connect code.\nEnable Quick Connect in the Jellyfin dashboard, or:\n- put jellyfintoken.txt (API key) on the SD card\n- click the dial to type an API key\n- scroll to request a new code")
+                                     : _lang("Could not sign in via plex.tv (no internet, or the code expired).\n\nAlternatives that work offline:\n- put plextoken.txt on the SD card (picked up automatically)\n- click the dial to type a token\n- scroll to request a new plex.tv code"));
             }
         }
-        // Sign in the moment an SD card carrying plextoken.txt shows up
-        if (!keyboard_active() && plex_token_from_sdcard()) {
+        // Sign in the moment an SD card carrying a token file shows up
+        if (!keyboard_active() && active_token_from_sdcard()) {
             plex_state_loading();
             return;
         }
@@ -812,10 +885,17 @@ static void plex_timer_cb(lv_timer_t *timer) {
 /**
  * Input handling
  */
-static void plex_save_server(const char *host, int port) {
-    snprintf(g_setting.plex.host, sizeof(g_setting.plex.host), "%s", host);
-    g_setting.plex.port = port > 0 ? port : 32400;
-    plex_settings_save();
+static void plex_save_server(const char *host, int port, int backend) {
+    g_setting.plex.backend = backend;
+    if (backend == MEDIA_BACKEND_JELLYFIN) {
+        snprintf(g_setting.jellyfin.host, sizeof(g_setting.jellyfin.host), "%s", host);
+        g_setting.jellyfin.port = port > 0 ? port : 8096;
+        jf_settings_save();
+    } else {
+        snprintf(g_setting.plex.host, sizeof(g_setting.plex.host), "%s", host);
+        g_setting.plex.port = port > 0 ? port : 32400;
+    }
+    plex_settings_save(); // persists the backend choice either way
 }
 
 static void plex_commit_keyboard_text(void) {
@@ -833,12 +913,13 @@ static void plex_commit_keyboard_text(void) {
             return;
         }
         char *colon = strrchr(buf, ':');
-        int port = 32400;
+        int port = 0;
         if (colon) {
             *colon = '\0';
             port = atoi(colon + 1);
         }
-        plex_save_server(buf, port);
+        // Jellyfin's default port marks the server kind; anything else is Plex
+        plex_save_server(buf, port, port == 8096 ? MEDIA_BACKEND_JELLYFIN : MEDIA_BACKEND_PLEX);
         plex_state_loading();
         break;
     }
@@ -847,8 +928,14 @@ static void plex_commit_keyboard_text(void) {
             plex_state_link();
             return;
         }
-        snprintf(g_setting.plex.token, sizeof(g_setting.plex.token), "%s", buf);
-        plex_settings_save();
+        if (backend_is_jf()) {
+            snprintf(g_setting.jellyfin.token, sizeof(g_setting.jellyfin.token), "%s", buf);
+            g_setting.jellyfin.user_id[0] = '\0';
+            jf_settings_save();
+        } else {
+            snprintf(g_setting.plex.token, sizeof(g_setting.plex.token), "%s", buf);
+            plex_settings_save();
+        }
         plex_state_loading();
         break;
     default:
@@ -859,14 +946,14 @@ static void plex_commit_keyboard_text(void) {
 static void plex_setup_row_activate(void) {
     if (g_plex.row_sel < g_plex.rows_server_count) {
         plex_server_t *srv = &g_plex.rows_servers[g_plex.row_sel];
-        plex_save_server(srv->host, srv->port);
+        plex_save_server(srv->host, srv->port, srv->backend);
         plex_state_loading();
     } else if (g_plex.row_sel == g_plex.rows_server_count) {
         plex_state_setup(true); // rescan
     } else {
         g_plex.pending_input = PLEX_INPUT_HOST;
-        plex_show_status(_lang("Type the server IP address (optionally :port),\nthen click the Func button to submit."));
-        keyboard_set_text(g_setting.plex.host);
+        plex_show_status(_lang("Type the server IP address (optionally :port),\nthen click the Func button to submit.\nUse :8096 for a Jellyfin server (:32400 or none = Plex)."));
+        keyboard_set_text(active_host());
         keyboard_open();
     }
 }
@@ -941,8 +1028,10 @@ static void plex_key(uint8_t key) {
         if (key == DIAL_KEY_CLICK) {
             // Manual token entry as fallback (the pin worker keeps polling)
             g_plex.pending_input = PLEX_INPUT_TOKEN;
-            plex_show_status(_lang("Type the token, then click the Func button to submit.\n(Find it in any Plex Web URL as X-Plex-Token.)"));
-            keyboard_set_text(g_setting.plex.token);
+            plex_show_status(backend_is_jf()
+                                 ? _lang("Type a Jellyfin API key, then click the Func button.\n(Create one in Dashboard -> API Keys.)")
+                                 : _lang("Type the token, then click the Func button to submit.\n(Find it in any Plex Web URL as X-Plex-Token.)"));
+            keyboard_set_text(active_token());
             keyboard_open();
         } else if ((key == DIAL_KEY_UP || key == DIAL_KEY_DOWN) && g_plex.link_failed) {
             plex_state_link(); // request a fresh plex.tv code
@@ -1056,15 +1145,21 @@ static void page_plex_enter(void) {
         return;
     }
 
-    // A pre-provisioned SD card (plextoken.txt with optional server line)
-    // completes setup without any on-goggle input.
-    if (!g_setting.plex.token[0] || !g_setting.plex.host[0]) {
-        plex_token_from_sdcard();
+    // A pre-provisioned SD card (plextoken.txt / jellyfintoken.txt with an
+    // optional server line) completes setup without any on-goggle input.
+    if (!active_token()[0] || !active_host()[0]) {
+        if (plex_token_from_sdcard()) {
+            g_setting.plex.backend = MEDIA_BACKEND_PLEX;
+            plex_settings_save();
+        } else if (jf_token_from_sdcard()) {
+            g_setting.plex.backend = MEDIA_BACKEND_JELLYFIN;
+            plex_settings_save();
+        }
     }
 
     if (g_plex.movies && g_plex.movie_count > 0) {
         plex_state_browse();
-    } else if (g_setting.plex.host[0]) {
+    } else if (active_host()[0]) {
         plex_state_loading();
     } else {
         g_plex.rows_server_count = 0;
@@ -1128,10 +1223,15 @@ static void page_plex_on_right_button(bool is_short) {
         if (is_short) {
             plex_state_loading(); // refresh library
         } else {
-            // Forget server + token, back to discovery
+            // Forget server + token (both backends), back to discovery
             g_setting.plex.host[0] = '\0';
             g_setting.plex.token[0] = '\0';
+            g_setting.plex.backend = MEDIA_BACKEND_PLEX;
             plex_settings_save();
+            g_setting.jellyfin.host[0] = '\0';
+            g_setting.jellyfin.token[0] = '\0';
+            g_setting.jellyfin.user_id[0] = '\0';
+            jf_settings_save();
             free(g_plex.movies);
             g_plex.movies = NULL;
             g_plex.movie_count = 0;

@@ -68,8 +68,8 @@ backend-agnostic by design. Add adapters, not new UIs:
 
 | Backend | Effort | Notes |
 |---|---|---|
-| Plex | done (browse) / phase 3 (play) | `src/core/plexapi.c` |
-| **Jellyfin** | small | Same architecture as plexapi (HTTP + JSON/XML, `/Items` listing, image transcoder, HLS transcode). Free + no account — removes the plex.tv dependency entirely for privacy-minded buyers. |
+| Plex | **done** (browse + playback) | `src/core/plexapi.c`, `src/core/plexstream.c` |
+| **Jellyfin** | **done** (browse + playback) | `src/core/jellyfinapi.c` — UDP discovery, Quick Connect code sign-in (fully local), `/Items` listing via a targeted JSON scanner, `/Videos/{id}/stream.ts` transcode through the same growing-file player. Free + no account — removes the plex.tv dependency entirely for privacy-minded buyers. |
 | DLNA/UPnP browse | medium | SSDP discovery is GDM-shaped; ContentDirectory browse is XML we already parse. |
 | SD/USB files | exists | Today's DVR playback page, reskinned into the launcher. |
 

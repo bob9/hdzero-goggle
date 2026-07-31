@@ -27,12 +27,13 @@ typedef struct {
     char name[64];
     char host[40];
     int port;
+    int backend; // media_backend_t: which kind of server answered
 } plex_server_t;
 
 typedef struct {
-    char rating_key[16];
+    char rating_key[40]; // Plex ratingKey or Jellyfin item id
     char title[96];
-    char thumb[96]; // server-side art path, "" if none
+    char thumb[96]; // server-side art path/tag, "" if none
     int year;       // 0 if unknown
     int duration_min;
     bool watched;
@@ -90,14 +91,11 @@ bool plex_token_from_sdcard(void);
  * Streaming download of a server path into a local file (used for movie
  * playback: the transcoded MPEG-TS grows on the SD card while the player
  * reads it). Blocking - run on a worker thread. `state` fields are updated
- * live; set `cancel` from any thread to abort.
+ * live; set `cancel` from any thread to abort. The state type is shared
+ * with the generic LAN client so both backends stream identically.
  */
-typedef struct {
-    volatile bool cancel;
-    volatile long bytes;   // downloaded so far
-    volatile bool done;    // stream ended (transcode complete)
-    volatile int result;   // PLEX_OK or error once done/failed
-} plex_stream_state_t;
+#include "core/lanhttp.h"
+typedef lan_stream_state_t plex_stream_state_t;
 
 int plex_stream_download(const char *path, const char *dest_file, plex_stream_state_t *state);
 

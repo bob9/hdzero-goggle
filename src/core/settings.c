@@ -293,6 +293,13 @@ const setting_t g_setting_defaults = {
         .port = 32400,
         .token = "",
         .client_id = "",
+        .backend = 0,
+    },
+    .jellyfin = {
+        .host = "",
+        .port = 8096,
+        .token = "",
+        .user_id = "",
     },
     .has_all_features = true,
 };
@@ -711,6 +718,13 @@ void settings_load(void) {
     g_setting.plex.port = ini_getl("plex", "port", g_setting_defaults.plex.port, SETTING_INI);
     ini_gets("plex", "token", g_setting_defaults.plex.token, g_setting.plex.token, PLEX_TOKEN_MAX, SETTING_INI);
     ini_gets("plex", "client_id", g_setting_defaults.plex.client_id, g_setting.plex.client_id, PLEX_CLIENTID_MAX, SETTING_INI);
+    g_setting.plex.backend = ini_getl("plex", "backend", g_setting_defaults.plex.backend, SETTING_INI);
+
+    // jellyfin client
+    ini_gets("jellyfin", "host", g_setting_defaults.jellyfin.host, g_setting.jellyfin.host, PLEX_HOST_MAX, SETTING_INI);
+    g_setting.jellyfin.port = ini_getl("jellyfin", "port", g_setting_defaults.jellyfin.port, SETTING_INI);
+    ini_gets("jellyfin", "token", g_setting_defaults.jellyfin.token, g_setting.jellyfin.token, PLEX_TOKEN_MAX, SETTING_INI);
+    ini_gets("jellyfin", "user_id", g_setting_defaults.jellyfin.user_id, g_setting.jellyfin.user_id, sizeof(g_setting.jellyfin.user_id), SETTING_INI);
 
     // Migrate the legacy single client network into the remembered list
     if (g_setting.wifi.net_count == 0 &&
