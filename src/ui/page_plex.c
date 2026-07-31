@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <log/log.h>
 
@@ -50,7 +51,7 @@
 typedef enum {
     PLEX_ST_NO_WIFI = 0,
     PLEX_ST_SETUP,   // pick a discovered server / enter one manually
-    PLEX_ST_TOKEN,   // keyboard entry of the X-Plex-Token
+    PLEX_ST_LINK,    // plex.tv/link code sign-in (keyboard/SD-file fallbacks live here too)
     PLEX_ST_LOADING, // connect + library fetch in flight
     PLEX_ST_BROWSE,  // poster wall
     PLEX_ST_ERROR,
@@ -61,6 +62,7 @@ typedef enum {
     PLEX_JOB_DISCOVER,
     PLEX_JOB_CONNECT,
     PLEX_JOB_POSTERS,
+    PLEX_JOB_PIN,
 } plex_job_t;
 
 typedef enum {
@@ -95,6 +97,12 @@ typedef struct {
     plex_movie_t poster_movies[PLEX_PAGE_CNT];
     int poster_count;
 
+    // JOB_PIN results
+    bool pin_code_ready; // a fresh plex.tv/link code is in pin_code
+    bool pin_linked;     // token obtained and saved by plexapi
+    bool pin_failed;     // could not reach plex.tv (or code expired)
+    char pin_code[12];
+
     volatile int progress; // movies fetched so far, for the loading label
 } plex_worker_state_t;
 
@@ -115,6 +123,7 @@ typedef struct {
     int row_count;
 
     bool detail_open;
+    bool link_failed; // last plex.tv code request/poll failed or expired
 
     // Widgets
     lv_obj_t *header;
@@ -230,6 +239,66 @@ static void *plex_worker_thread(void *arg) {
             break;
         }
 
+        case PLEX_JOB_PIN: {
+            char code[12] = "";
+            int pin_id = 0;
+            int rc = plex_pin_start(&pin_id, code, sizeof(code));
+
+            pthread_mutex_lock(&g_work.lock);
+            if (gen != g_work.gen) {
+                pthread_mutex_unlock(&g_work.lock);
+                break;
+            }
+            if (rc == PLEX_OK) {
+                snprintf(g_work.pin_code, sizeof(g_work.pin_code), "%s", code);
+                g_work.pin_code_ready = true;
+            } else {
+                g_work.pin_failed = true;
+            }
+            pthread_mutex_unlock(&g_work.lock);
+            if (rc != PLEX_OK) {
+                break;
+            }
+
+            // Poll until linked, superseded, or the code's 15 minute life ends
+            for (int elapsed_s = 0; elapsed_s < 900; elapsed_s += 3) {
+                for (int i = 0; i < 12; i++) { // 3s in responsive chunks
+                    usleep(250 * 1000);
+                    pthread_mutex_lock(&g_work.lock);
+                    bool stale = (gen != g_work.gen) || (g_work.job != PLEX_JOB_NONE);
+                    pthread_mutex_unlock(&g_work.lock);
+                    if (stale) {
+                        goto pin_done;
+                    }
+                }
+
+                rc = plex_pin_poll(pin_id);
+                if (rc == PLEX_PENDING || rc == PLEX_ERR_NET) {
+                    continue; // transient network blips keep polling
+                }
+
+                pthread_mutex_lock(&g_work.lock);
+                if (gen == g_work.gen) {
+                    if (rc == PLEX_OK) {
+                        g_work.pin_linked = true;
+                    } else {
+                        g_work.pin_failed = true;
+                    }
+                }
+                pthread_mutex_unlock(&g_work.lock);
+                goto pin_done;
+            }
+
+            // Code expired without being linked
+            pthread_mutex_lock(&g_work.lock);
+            if (gen == g_work.gen) {
+                g_work.pin_failed = true;
+            }
+            pthread_mutex_unlock(&g_work.lock);
+        pin_done:
+            break;
+        }
+
         default:
             break;
         }
@@ -259,6 +328,9 @@ static void plex_invalidate_pending_work(void) {
     g_work.job = PLEX_JOB_NONE;
     g_work.discover_done = false;
     g_work.connect_done = false;
+    g_work.pin_code_ready = false;
+    g_work.pin_linked = false;
+    g_work.pin_failed = false;
     free(g_work.res_movies);
     g_work.res_movies = NULL;
     g_work.res_count = 0;
@@ -378,22 +450,32 @@ static void plex_state_loading(void) {
 
 static void plex_state_loading(void);
 
-static void plex_state_token(void) {
-    // The no-typing path first: a plextoken.txt on the SD card signs in
-    // without ever showing the keyboard.
+static void plex_state_link(void) {
+    // The zero-interaction path first: a plextoken.txt on the SD card signs
+    // in without showing anything.
     if (plex_token_from_sdcard()) {
         plex_state_loading();
         return;
     }
 
     plex_enter_state_common();
-    g_plex.state = PLEX_ST_TOKEN;
+    g_plex.state = PLEX_ST_LINK;
+    g_plex.link_failed = false;
     plex_set_header(_lang("Plex - Sign In"));
-    plex_show_status(_lang("This server requires a Plex token.\nEasiest: on your computer, save the token into a file named\nplextoken.txt on this SD card - it is picked up automatically,\neven if you insert the card right now.\n\nOr type the token below, then click the Func button to submit.\n(Find your token in any Plex Web URL as X-Plex-Token.)"));
-    plex_set_hint(_lang("Func button: Click to submit, Hold to erase"));
-    g_plex.pending_input = PLEX_INPUT_TOKEN;
-    keyboard_set_text(g_setting.plex.token);
-    keyboard_open();
+    plex_show_status(_lang("Requesting a sign-in code from plex.tv..."));
+    plex_set_hint(_lang("Click the dial to type a token instead. Long press the Enter button to exit"));
+    plex_post_job(PLEX_JOB_PIN);
+}
+
+static void plex_link_show_code(const char *code) {
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+             "%s\n\n      plex.tv/link\n\n%s\n\n      %s\n\n%s",
+             _lang("On your phone or computer, go to:"),
+             _lang("sign in to your Plex account, and enter this code:"),
+             code,
+             _lang("This screen continues automatically once linked.\n(Alternatives: put plextoken.txt on the SD card,\nor click the dial to type a token.)"));
+    plex_show_status(buf);
 }
 
 static void plex_state_error(const char *msg) {
@@ -522,12 +604,28 @@ static void plex_timer_cb(lv_timer_t *timer) {
     int count = 0;
     char section_title[64] = "";
 
+    bool pin_code_ready = false, pin_linked = false, pin_failed = false;
+    char pin_code[12] = "";
+
     pthread_mutex_lock(&g_work.lock);
     if (g_work.discover_done) {
         discover_done = true;
         g_work.discover_done = false;
         memcpy(g_plex.rows_servers, g_work.servers, sizeof(g_work.servers));
         g_plex.rows_server_count = g_work.server_count;
+    }
+    if (g_work.pin_code_ready) {
+        pin_code_ready = true;
+        g_work.pin_code_ready = false;
+        snprintf(pin_code, sizeof(pin_code), "%s", g_work.pin_code);
+    }
+    if (g_work.pin_linked) {
+        pin_linked = true;
+        g_work.pin_linked = false;
+    }
+    if (g_work.pin_failed) {
+        pin_failed = true;
+        g_work.pin_failed = false;
     }
     if (g_work.connect_done) {
         connect_done = true;
@@ -565,7 +663,7 @@ static void plex_timer_cb(lv_timer_t *timer) {
             break;
         case PLEX_ERR_AUTH:
             free(movies);
-            plex_state_token();
+            plex_state_link();
             break;
         case PLEX_ERR_NOMOVIE:
             free(movies);
@@ -579,9 +677,23 @@ static void plex_timer_cb(lv_timer_t *timer) {
         return;
     }
 
-    if (g_plex.state == PLEX_ST_TOKEN) {
+    if (g_plex.state == PLEX_ST_LINK) {
+        // plex.tv/link progress
+        if (pin_linked) {
+            plex_state_loading();
+            return;
+        }
+        if (pin_code_ready && !keyboard_active()) {
+            plex_link_show_code(pin_code);
+        }
+        if (pin_failed) {
+            g_plex.link_failed = true;
+            if (!keyboard_active()) {
+                plex_show_status(_lang("Could not sign in via plex.tv (no internet, or the code expired).\n\nAlternatives that work offline:\n- put plextoken.txt on the SD card (picked up automatically)\n- click the dial to type a token\n- scroll to request a new plex.tv code"));
+            }
+        }
         // Sign in the moment an SD card carrying plextoken.txt shows up
-        if (plex_token_from_sdcard()) {
+        if (!keyboard_active() && plex_token_from_sdcard()) {
             plex_state_loading();
             return;
         }
@@ -643,6 +755,10 @@ static void plex_commit_keyboard_text(void) {
         break;
     }
     case PLEX_INPUT_TOKEN:
+        if (!buf[0]) {
+            plex_state_link();
+            return;
+        }
         snprintf(g_setting.plex.token, sizeof(g_setting.plex.token), "%s", buf);
         plex_settings_save();
         plex_state_loading();
@@ -717,11 +833,15 @@ static void plex_key(uint8_t key) {
         }
         break;
 
-    case PLEX_ST_TOKEN:
-        // The keyboard is normally up in this state; if it was dismissed,
-        // any click returns to server selection.
+    case PLEX_ST_LINK:
         if (key == DIAL_KEY_CLICK) {
-            plex_state_setup(false);
+            // Manual token entry as fallback (the pin worker keeps polling)
+            g_plex.pending_input = PLEX_INPUT_TOKEN;
+            plex_show_status(_lang("Type the token, then click the Func button to submit.\n(Find it in any Plex Web URL as X-Plex-Token.)"));
+            keyboard_set_text(g_setting.plex.token);
+            keyboard_open();
+        } else if ((key == DIAL_KEY_UP || key == DIAL_KEY_DOWN) && g_plex.link_failed) {
+            plex_state_link(); // request a fresh plex.tv code
         }
         break;
 

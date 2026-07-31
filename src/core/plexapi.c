@@ -577,6 +577,78 @@ int plex_load_movies(const char *section_key, plex_movie_t **out, int *out_count
     return PLEX_OK;
 }
 
+/**
+ * plex.tv PIN-link flow. The firmware's bundled curl (BearSSL) handles the
+ * HTTPS leg to plex.tv, exactly like the online firmware downloader does.
+ * -k mirrors the existing downloader scripts (no CA bundle on the device).
+ */
+static int plex_curl_pin(const char *method_args, char *out, int out_size) {
+    char cmd[768];
+    snprintf(cmd, sizeof(cmd),
+             "curl -ks -m 15 %s "
+             "-H 'Accept: application/xml' "
+             "-H 'X-Plex-Product: HDZero Goggle' "
+             "-H 'X-Plex-Version: 1.0' "
+             "-H 'X-Plex-Client-Identifier: %s' 2>/dev/null",
+             method_args, plex_client_id());
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) {
+        return PLEX_ERR_NET;
+    }
+    size_t len = fread(out, 1, out_size - 1, fp);
+    int status = pclose(fp);
+    out[len] = '\0';
+    if (status != 0 || len == 0) {
+        return PLEX_ERR_NET;
+    }
+    return PLEX_OK;
+}
+
+int plex_pin_start(int *pin_id, char *code, int code_size) {
+    char body[4096];
+    int rc = plex_curl_pin("-X POST 'https://plex.tv/api/v2/pins?strong=false'", body, sizeof(body));
+    if (rc != PLEX_OK) {
+        return rc;
+    }
+
+    const char *pin = xml_next_elem(body, "pin");
+    if (!pin) {
+        return PLEX_ERR_PROTO;
+    }
+    long id = xml_attr_long(pin, "id", -1);
+    if (id < 0 || !xml_attr(pin, "code", code, code_size)) {
+        return PLEX_ERR_PROTO;
+    }
+    *pin_id = (int)id;
+    LOGI("plex: pin %ld code %s", id, code);
+    return PLEX_OK;
+}
+
+int plex_pin_poll(int pin_id) {
+    char args[128], body[4096];
+    snprintf(args, sizeof(args), "'https://plex.tv/api/v2/pins/%d'", pin_id);
+    int rc = plex_curl_pin(args, body, sizeof(body));
+    if (rc != PLEX_OK) {
+        return rc;
+    }
+
+    const char *pin = xml_next_elem(body, "pin");
+    if (!pin) {
+        return PLEX_ERR_PROTO;
+    }
+
+    char token[PLEX_TOKEN_MAX] = "";
+    if (!xml_attr(pin, "authToken", token, sizeof(token)) || !token[0]) {
+        return PLEX_PENDING;
+    }
+
+    snprintf(g_setting.plex.token, sizeof(g_setting.plex.token), "%s", token);
+    plex_settings_save();
+    LOGI("plex: pin linked, token stored");
+    return PLEX_OK;
+}
+
 static const char *plex_cache_dir(void) {
     return fs_file_exists("/mnt/extsd") ? PLEX_CACHE_SD : PLEX_CACHE_TMP;
 }

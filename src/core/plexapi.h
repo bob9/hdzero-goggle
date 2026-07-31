@@ -14,6 +14,7 @@ extern "C" {
  */
 
 #define PLEX_OK          0
+#define PLEX_PENDING     1  // pin not linked yet, keep polling
 #define PLEX_ERR_NET     -1 // unreachable / connection or read failure
 #define PLEX_ERR_AUTH    -2 // 401/403 - token required or wrong
 #define PLEX_ERR_NOMOVIE -3 // no movie library section on the server
@@ -84,6 +85,18 @@ void plex_settings_save(void);
  * Returns true if a token was read and saved.
  */
 bool plex_token_from_sdcard(void);
+
+/**
+ * plex.tv PIN-link sign-in (the TV-app flow: show a 4-character code, the
+ * user enters it at plex.tv/link on any device). Uses the on-device curl
+ * (BearSSL) for the HTTPS leg, so it needs internet access.
+ *
+ * plex_pin_start requests a new code; plex_pin_poll returns PLEX_PENDING
+ * until the user links, then PLEX_OK with the account token stored in
+ * g_setting.plex.token (and saved).
+ */
+int plex_pin_start(int *pin_id, char *code, int code_size);
+int plex_pin_poll(int pin_id);
 
 #ifdef __cplusplus
 }

@@ -90,17 +90,20 @@ UUID, generated once and stored), `X-Plex-Product=HDZero Goggle`,
 Supported paths, in this order of preference in the UI (the goggle has no real
 keyboard, so typing-free options come first):
 
-1. **SD-card token file** (implemented, primary): the user saves their
-   `X-Plex-Token` into `plextoken.txt` on the SD card root (line 1 = token,
-   optional line 2 = `host[:port]`). The goggle adopts it automatically — on
-   page entry, when the sign-in screen is shown, and live when a card is
-   inserted while the sign-in screen is up. Zero on-goggle typing.
-2. **Server "allow without auth" allowlist** (zero code): adding the home
+1. **plex.tv PIN link** (implemented, primary): the goggle shows a
+   4-character code; the user enters it at plex.tv/link on any signed-in
+   device — the standard smart-TV flow. The HTTPS leg to plex.tv rides the
+   firmware's bundled `curl`/BearSSL (the same path the online firmware
+   downloader uses), so no new TLS stack was needed. Needs internet once.
+2. **SD-card token file** (implemented, offline fallback): `plextoken.txt`
+   on the SD card root (line 1 = token, optional line 2 = `host[:port]`) is
+   adopted automatically — on page entry, on the sign-in screen, and live
+   when a card is inserted while the sign-in screen is up.
+3. **Server "allow without auth" allowlist** (zero code): adding the home
    subnet in Plex's Settings → Network skips authentication entirely on the
    LAN.
-3. **Manual token entry** via `ui_keyboard` — the on-device fallback.
-4. **plex.tv PIN link** (future work, not implemented): needs a TLS stack for
-   plex.tv; would show a 4-character code the user enters at plex.tv/link.
+4. **Manual token entry** via `ui_keyboard` — the on-device last resort
+   (click the dial on the sign-in screen).
 
 The token is stored in settings and reused; Plex tokens don't expire in
 practice.
