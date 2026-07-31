@@ -301,6 +301,11 @@ const setting_t g_setting_defaults = {
         .token = "",
         .user_id = "",
     },
+    .immich = {
+        .host = "",
+        .port = 2283,
+        .api_key = "",
+    },
     .has_all_features = true,
 };
 
@@ -725,6 +730,11 @@ void settings_load(void) {
     g_setting.jellyfin.port = ini_getl("jellyfin", "port", g_setting_defaults.jellyfin.port, SETTING_INI);
     ini_gets("jellyfin", "token", g_setting_defaults.jellyfin.token, g_setting.jellyfin.token, PLEX_TOKEN_MAX, SETTING_INI);
     ini_gets("jellyfin", "user_id", g_setting_defaults.jellyfin.user_id, g_setting.jellyfin.user_id, sizeof(g_setting.jellyfin.user_id), SETTING_INI);
+
+    // immich backup
+    ini_gets("immich", "host", g_setting_defaults.immich.host, g_setting.immich.host, PLEX_HOST_MAX, SETTING_INI);
+    g_setting.immich.port = ini_getl("immich", "port", g_setting_defaults.immich.port, SETTING_INI);
+    ini_gets("immich", "api_key", g_setting_defaults.immich.api_key, g_setting.immich.api_key, IMMICH_KEY_MAX, SETTING_INI);
 
     // Migrate the legacy single client network into the remembered list
     if (g_setting.wifi.net_count == 0 &&

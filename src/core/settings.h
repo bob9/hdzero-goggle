@@ -407,6 +407,14 @@ typedef struct {
     char user_id[40];
 } setting_jellyfin_t;
 
+#define IMMICH_KEY_MAX 96
+
+typedef struct {
+    char host[PLEX_HOST_MAX];
+    int port; // default 2283
+    char api_key[IMMICH_KEY_MAX];
+} setting_immich_t;
+
 typedef struct {
     setting_scan_t scan;
     setting_fan_t fans;
@@ -427,6 +435,7 @@ typedef struct {
     setting_analog_rssi_t analog_rssi;
     setting_plex_t plex;
     setting_jellyfin_t jellyfin;
+    setting_immich_t immich;
     bool has_all_features;
 } setting_t;
 

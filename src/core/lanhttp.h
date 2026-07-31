@@ -42,6 +42,19 @@ int lanhttp_download(const char *host, int port, const char *path,
                      const char *extra_headers, const char *dest_file,
                      lan_stream_state_t *state);
 
+/**
+ * Multipart/form-data POST streaming a file from disk (for multi-GB
+ * uploads). `fields` are simple name/value string pairs sent before the
+ * file part. state->bytes tracks sent file bytes; set cancel to abort.
+ * On HTTP 2xx, *resp_body (optional) is the malloc'd response. Returns
+ * the HTTP status or <0 on network failure.
+ */
+int lanhttp_post_file(const char *host, int port, const char *path,
+                      const char *extra_headers,
+                      const char *fields[][2], int field_count,
+                      const char *file_field, const char *filename, const char *filepath,
+                      lan_stream_state_t *state, char **resp_body);
+
 #ifdef __cplusplus
 }
 #endif

@@ -193,6 +193,151 @@ int lanhttp_request(const char *host, int port, const char *method, const char *
     return status;
 }
 
+int lanhttp_post_file(const char *host, int port, const char *path,
+                      const char *extra_headers,
+                      const char *fields[][2], int field_count,
+                      const char *file_field, const char *filename, const char *filepath,
+                      lan_stream_state_t *state, char **resp_body) {
+    static const char *BOUNDARY = "hdzgboundary7f3a9c1e";
+
+    state->bytes = 0;
+    state->done = false;
+    state->result = LANHTTP_ERR_NET;
+    if (resp_body) {
+        *resp_body = NULL;
+    }
+
+    FILE *in = fopen(filepath, "rb");
+    if (!in) {
+        state->done = true;
+        return LANHTTP_ERR_NET;
+    }
+    fseek(in, 0, SEEK_END);
+    long file_size = ftell(in);
+    fseek(in, 0, SEEK_SET);
+
+    // Assemble everything except the file bytes so Content-Length is exact
+    char preamble[2048];
+    int pre_len = 0;
+    for (int i = 0; i < field_count; i++) {
+        pre_len += snprintf(preamble + pre_len, sizeof(preamble) - pre_len,
+                            "--%s\r\n"
+                            "Content-Disposition: form-data; name=\"%s\"\r\n\r\n"
+                            "%s\r\n",
+                            BOUNDARY, fields[i][0], fields[i][1]);
+    }
+    pre_len += snprintf(preamble + pre_len, sizeof(preamble) - pre_len,
+                        "--%s\r\n"
+                        "Content-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\n"
+                        "Content-Type: application/octet-stream\r\n\r\n",
+                        BOUNDARY, file_field, filename);
+    char epilogue[64];
+    int epi_len = snprintf(epilogue, sizeof(epilogue), "\r\n--%s--\r\n", BOUNDARY);
+    if (pre_len >= (int)sizeof(preamble)) {
+        fclose(in);
+        state->done = true;
+        return LANHTTP_ERR_NET;
+    }
+
+    int fd = lanhttp_connect(host, port);
+    if (fd < 0) {
+        fclose(in);
+        state->done = true;
+        return LANHTTP_ERR_NET;
+    }
+
+    char req[1024];
+    int req_len = snprintf(req, sizeof(req),
+                           "POST %s HTTP/1.0\r\n"
+                           "Host: %s:%d\r\n"
+                           "Accept: application/json\r\n"
+                           "%s"
+                           "Content-Type: multipart/form-data; boundary=%s\r\n"
+                           "Content-Length: %ld\r\n"
+                           "Connection: close\r\n"
+                           "\r\n",
+                           path, host, port,
+                           extra_headers ? extra_headers : "",
+                           BOUNDARY, (long)pre_len + file_size + epi_len);
+    if (req_len >= (int)sizeof(req) ||
+        write(fd, req, req_len) != req_len ||
+        write(fd, preamble, pre_len) != pre_len) {
+        fclose(in);
+        close(fd);
+        state->done = true;
+        return LANHTTP_ERR_NET;
+    }
+
+    char buf[64 * 1024];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        if (state->cancel) {
+            fclose(in);
+            close(fd);
+            state->result = LANHTTP_ERR_NET;
+            state->done = true;
+            return LANHTTP_ERR_NET;
+        }
+        ssize_t sent = 0;
+        while (sent < (ssize_t)n) {
+            ssize_t w = write(fd, buf + sent, n - sent);
+            if (w <= 0) {
+                LOGE("lanhttp: upload write failed at %ld bytes", state->bytes);
+                fclose(in);
+                close(fd);
+                state->done = true;
+                return LANHTTP_ERR_NET;
+            }
+            sent += w;
+        }
+        state->bytes += n;
+    }
+    fclose(in);
+    if (write(fd, epilogue, epi_len) != epi_len) {
+        close(fd);
+        state->done = true;
+        return LANHTTP_ERR_NET;
+    }
+
+    // Small JSON response
+    size_t cap = 16 * 1024, len = 0;
+    char *resp = malloc(cap);
+    if (!resp) {
+        close(fd);
+        state->done = true;
+        return LANHTTP_ERR_NET;
+    }
+    for (;;) {
+        if (len + 2048 + 1 > cap) {
+            break; // response larger than any expected asset reply; keep what we have
+        }
+        ssize_t r = read(fd, resp + len, 2048);
+        if (r <= 0) {
+            break;
+        }
+        len += r;
+    }
+    close(fd);
+    resp[len] = '\0';
+
+    int status = 0;
+    char *body = strstr(resp, "\r\n\r\n");
+    if (sscanf(resp, "HTTP/%*d.%*d %d", &status) != 1 || !body) {
+        free(resp);
+        state->done = true;
+        return LANHTTP_ERR_PROTO;
+    }
+    if (resp_body) {
+        *resp_body = strdup(body + 4);
+    }
+    free(resp);
+
+    state->result = (status >= 200 && status < 300) ? 0 : LANHTTP_ERR_PROTO;
+    state->done = true;
+    LOGI("lanhttp: upload of %s finished, status %d, %ld bytes", filename, status, state->bytes);
+    return status;
+}
+
 int lanhttp_download(const char *host, int port, const char *path,
                      const char *extra_headers, const char *dest_file,
                      lan_stream_state_t *state) {
