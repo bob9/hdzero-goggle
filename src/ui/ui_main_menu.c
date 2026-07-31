@@ -34,6 +34,7 @@
 #include "ui/page_source.h"
 #include "ui/page_storage.h"
 #include "ui/page_version.h"
+#include "ui/page_plex.h"
 #include "ui/page_wifi.h"
 #include "ui/ui_image_setting.h"
 #include "ui/ui_keyboard.h"
@@ -329,6 +330,7 @@ void main_menu_init(void) {
     if (g_setting.has_all_features) {
         page_packs[page_packs_count++] = &pp_elrs;
         page_packs[page_packs_count++] = &pp_wifi;
+        page_packs[page_packs_count++] = &pp_plex;
     }
     page_packs[page_packs_count++] = &pp_headtracker;
     page_packs[page_packs_count++] = &pp_playback;

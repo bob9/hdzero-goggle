@@ -383,6 +383,17 @@ typedef struct {
     uint16_t calib_max;
 } setting_analog_rssi_t;
 
+#define PLEX_HOST_MAX     40
+#define PLEX_TOKEN_MAX    64
+#define PLEX_CLIENTID_MAX 33
+
+typedef struct {
+    char host[PLEX_HOST_MAX];
+    int port;
+    char token[PLEX_TOKEN_MAX];
+    char client_id[PLEX_CLIENTID_MAX];
+} setting_plex_t;
+
 typedef struct {
     setting_scan_t scan;
     setting_fan_t fans;
@@ -401,6 +412,7 @@ typedef struct {
     setting_storage_t storage;
     language_t language;
     setting_analog_rssi_t analog_rssi;
+    setting_plex_t plex;
     bool has_all_features;
 } setting_t;
 

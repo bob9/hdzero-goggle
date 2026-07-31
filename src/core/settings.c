@@ -288,6 +288,12 @@ const setting_t g_setting_defaults = {
         .calib_min = 1600,
         .calib_max = 2100,
     },
+    .plex = {
+        .host = "",
+        .port = 32400,
+        .token = "",
+        .client_id = "",
+    },
     .has_all_features = true,
 };
 
@@ -699,6 +705,12 @@ void settings_load(void) {
         snprintf(key, sizeof(key), "net%d_passwd", i);
         ini_gets("wifi", key, "", g_setting.wifi.networks[i].passwd, WIFI_PASSWD_MAX, SETTING_INI);
     }
+
+    // plex client
+    ini_gets("plex", "host", g_setting_defaults.plex.host, g_setting.plex.host, PLEX_HOST_MAX, SETTING_INI);
+    g_setting.plex.port = ini_getl("plex", "port", g_setting_defaults.plex.port, SETTING_INI);
+    ini_gets("plex", "token", g_setting_defaults.plex.token, g_setting.plex.token, PLEX_TOKEN_MAX, SETTING_INI);
+    ini_gets("plex", "client_id", g_setting_defaults.plex.client_id, g_setting.plex.client_id, PLEX_CLIENTID_MAX, SETTING_INI);
 
     // Migrate the legacy single client network into the remembered list
     if (g_setting.wifi.net_count == 0 &&
