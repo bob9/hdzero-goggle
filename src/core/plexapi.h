@@ -87,6 +87,27 @@ void plex_settings_save(void);
 bool plex_token_from_sdcard(void);
 
 /**
+ * Streaming download of a server path into a local file (used for movie
+ * playback: the transcoded MPEG-TS grows on the SD card while the player
+ * reads it). Blocking - run on a worker thread. `state` fields are updated
+ * live; set `cancel` from any thread to abort.
+ */
+typedef struct {
+    volatile bool cancel;
+    volatile long bytes;   // downloaded so far
+    volatile bool done;    // stream ended (transcode complete)
+    volatile int result;   // PLEX_OK or error once done/failed
+} plex_stream_state_t;
+
+int plex_stream_download(const char *path, const char *dest_file, plex_stream_state_t *state);
+
+/**
+ * Simple GET against the configured server, response body discarded.
+ * Used for fire-and-forget calls (stop a transcode session, timelines).
+ */
+int plex_server_request(const char *path);
+
+/**
  * plex.tv PIN-link sign-in (the TV-app flow: show a 4-character code, the
  * user enters it at plex.tv/link on any device). Uses the on-device curl
  * (BearSSL) for the HTTPS leg, so it needs internet access.

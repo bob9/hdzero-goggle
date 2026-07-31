@@ -112,6 +112,22 @@ practice.
 
 ## 4. Playback strategy
 
+> **Implemented (phase 3), differently than designed below:** the vendor
+> CedarX stream layer only ships `file://`/`fd://` drivers (its HTTP driver
+> is compiled out), and the MPP pipeline binds VDEC to the vendor demux
+> component rather than accepting app-fed packets. So instead of the
+> libavformat `netdmx` below, playback asks the server for a **universal
+> transcode/remux to H.264/AAC MPEG-TS over plain HTTP**
+> (`plexstream.c`), downloads it onto the SD card, and plays the growing
+> `.ts` with the stock player (`awdmx`/`vdec2vo`/`adec2ao`) after an 8 MB
+> head start — TS is linear, so the growing file works, and every codec in
+> the library becomes playable (compatible H.264 is remuxed, not
+> re-encoded). The known movie runtime overrides the growing file's bogus
+> duration via `media_override_duration()`. Trade-offs: server does the
+> (cheap) remux; seek works within the downloaded region; disk use up to
+> the movie's size at the 12 Mbps cap, deleted on stop. The original design
+> is kept below for reference.
+
 The hardware decoder is H.264 (the DVR records and plays back H.264 up to
 1080p90, so 1080p24 Blu-ray-class movie streams are easy). Container support in
 the existing pipeline is MP4 and MPEG-TS.

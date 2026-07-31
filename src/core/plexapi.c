@@ -167,21 +167,8 @@ static int plex_connect(const char *host, int port) {
     return fd;
 }
 
-/**
- * HTTP/1.0 GET. Connection: close framing means the body simply ends at EOF,
- * so no chunked-transfer handling is needed. Response body is malloc'd.
- */
-static int plex_http_get(const char *host, int port, const char *path, plex_http_resp_t *resp) {
-    memset(resp, 0, sizeof(*resp));
-    resp->status = PLEX_ERR_NET;
-
-    int fd = plex_connect(host, port);
-    if (fd < 0) {
-        return PLEX_ERR_NET;
-    }
-
-    char req[1024];
-    int req_len = snprintf(req, sizeof(req),
+static int plex_build_request(char *req, int size, const char *host, int port, const char *path) {
+    int req_len = snprintf(req, size,
                            "GET %s HTTP/1.0\r\n"
                            "Host: %s:%d\r\n"
                            "Accept: application/xml\r\n"
@@ -197,7 +184,25 @@ static int plex_http_get(const char *host, int port, const char *path, plex_http
                            g_setting.plex.token[0] ? "X-Plex-Token: " : "",
                            g_setting.plex.token[0] ? g_setting.plex.token : "",
                            g_setting.plex.token[0] ? "\r\n" : "");
-    if (req_len >= (int)sizeof(req) || write(fd, req, req_len) != req_len) {
+    return (req_len >= size) ? -1 : req_len;
+}
+
+/**
+ * HTTP/1.0 GET. Connection: close framing means the body simply ends at EOF,
+ * so no chunked-transfer handling is needed. Response body is malloc'd.
+ */
+static int plex_http_get(const char *host, int port, const char *path, plex_http_resp_t *resp) {
+    memset(resp, 0, sizeof(*resp));
+    resp->status = PLEX_ERR_NET;
+
+    int fd = plex_connect(host, port);
+    if (fd < 0) {
+        return PLEX_ERR_NET;
+    }
+
+    char req[1024];
+    int req_len = plex_build_request(req, sizeof(req), host, port, path);
+    if (req_len < 0 || write(fd, req, req_len) != req_len) {
         close(fd);
         return PLEX_ERR_NET;
     }
@@ -575,6 +580,115 @@ int plex_load_movies(const char *section_key, plex_movie_t **out, int *out_count
     *out = list;
     *out_count = count;
     return PLEX_OK;
+}
+
+int plex_server_request(const char *path) {
+    plex_http_resp_t resp;
+    int rc = plex_http_get(g_setting.plex.host, g_setting.plex.port, path, &resp);
+    plex_http_free(&resp);
+    return rc;
+}
+
+int plex_stream_download(const char *path, const char *dest_file, plex_stream_state_t *state) {
+    state->bytes = 0;
+    state->done = false;
+    state->result = PLEX_ERR_NET;
+
+    int fd = plex_connect(g_setting.plex.host, g_setting.plex.port);
+    if (fd < 0) {
+        state->done = true;
+        return PLEX_ERR_NET;
+    }
+
+    char req[1536];
+    int req_len = plex_build_request(req, sizeof(req), g_setting.plex.host, g_setting.plex.port, path);
+    if (req_len < 0 || write(fd, req, req_len) != req_len) {
+        close(fd);
+        state->done = true;
+        return PLEX_ERR_NET;
+    }
+
+    // Parse the response header, then stream the body straight to disk
+    char head[4096];
+    size_t head_len = 0;
+    char *body_start = NULL;
+    while (head_len < sizeof(head) - 1) {
+        ssize_t n = read(fd, head + head_len, sizeof(head) - 1 - head_len);
+        if (n <= 0) {
+            close(fd);
+            state->done = true;
+            return PLEX_ERR_NET;
+        }
+        head_len += n;
+        head[head_len] = '\0';
+        if ((body_start = strstr(head, "\r\n\r\n")) != NULL) {
+            body_start += 4;
+            break;
+        }
+    }
+    int status = 0;
+    if (!body_start || sscanf(head, "HTTP/%*d.%*d %d", &status) != 1 || status != 200) {
+        LOGE("plex: stream http status %d", status);
+        close(fd);
+        state->done = true;
+        state->result = (status == 401 || status == 403) ? PLEX_ERR_AUTH : PLEX_ERR_PROTO;
+        return state->result;
+    }
+
+    FILE *out = fopen(dest_file, "wb");
+    if (!out) {
+        close(fd);
+        state->done = true;
+        return PLEX_ERR_NET;
+    }
+
+    size_t body_in_head = head_len - (body_start - head);
+    if (body_in_head > 0) {
+        fwrite(body_start, 1, body_in_head, out);
+        state->bytes = body_in_head;
+    }
+
+    char buf[64 * 1024];
+    int quiet_reads = 0; // the transcoder legitimately pauses; only a long
+                         // silence (~60s) is a real failure
+    int rc = PLEX_OK;
+    while (!state->cancel) {
+        ssize_t n = read(fd, buf, sizeof(buf));
+        if (n > 0) {
+            quiet_reads = 0;
+            if (fwrite(buf, 1, n, out) != (size_t)n) {
+                LOGE("plex: stream write failed (disk full?)");
+                rc = PLEX_ERR_NET;
+                break;
+            }
+            state->bytes += n;
+            // Keep the on-disk frontier honest for the concurrent reader
+            if ((state->bytes & ((256 * 1024) - 1)) < (long)sizeof(buf)) {
+                fflush(out);
+            }
+        } else if (n == 0) {
+            break; // transcode complete
+        } else {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                if (++quiet_reads >= 12) { // 12 x 5s recv timeout
+                    LOGE("plex: stream stalled for 60s, giving up");
+                    rc = PLEX_ERR_NET;
+                    break;
+                }
+                continue;
+            }
+            rc = PLEX_ERR_NET;
+            break;
+        }
+    }
+
+    fflush(out);
+    fclose(out);
+    close(fd);
+    state->result = state->cancel ? PLEX_OK : rc;
+    state->done = true;
+    LOGI("plex: stream ended, %ld bytes, rc=%d%s", state->bytes, rc, state->cancel ? " (cancelled)" : "");
+    return state->result;
 }
 
 /**

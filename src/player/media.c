@@ -71,9 +71,10 @@ typedef struct
     uint32_t state;
     pthread_mutex_t mutex;
 
-    int playingTime; // ms
-    int retimedHz;   // nonzero while the UI output is retimed for this file
-    int fps;         // measured decoded frames/sec, updated once a second
+    int playingTime;             // ms
+    int retimedHz;               // nonzero while the UI output is retimed for this file
+    int fps;                     // measured decoded frames/sec, updated once a second
+    uint32_t durationOverrideMs; // nonzero: report this instead of the demuxer's duration
 } PlayContext_t;
 
 static int play_start(PlayContext_t *playCtx) {
@@ -211,7 +212,8 @@ void *thread_media(void *params) {
         //     LOGI("is_media_thread_exit = 2");
 
         info.playing_time = playCtx->playingTime;
-        info.duration = playCtx->dmx->msDuration;
+        info.duration = playCtx->durationOverrideMs ? playCtx->durationOverrideMs
+                                                    : playCtx->dmx->msDuration;
         info.fps = playCtx->fps;
         if (!media->is_media_thread_exit)
             notify(&info);
@@ -386,6 +388,12 @@ int media_retimed_hz(media_t *media) {
     if (!media)
         return 0;
     return ((PlayContext_t *)media->context)->retimedHz;
+}
+
+void media_override_duration(media_t *media, uint32_t ms) {
+    if (!media)
+        return;
+    ((PlayContext_t *)media->context)->durationOverrideMs = ms;
 }
 
 void media_exit(media_t *media) {

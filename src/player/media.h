@@ -42,6 +42,10 @@ void media_exit(media_t *media);
 void media_control(media_t *media, player_cmd_t *cmd);
 int media_retimed_hz(media_t *media); // 0 = stock display timing, 60/90 = retimed for this file
 
+// For files whose container misreports length (e.g. a network stream still
+// growing on disk): report this duration to the UI instead of the demuxer's.
+void media_override_duration(media_t *media, uint32_t ms);
+
 #ifdef __cplusplus
 }
 #endif

@@ -10,14 +10,22 @@
 
 #include "../conf/ui.h"
 
+#include <sys/statvfs.h>
+
+#include "core/app_state.h"
 #include "core/common.hh"
 #include "core/plexapi.h"
+#include "core/plexstream.h"
 #include "core/settings.h"
 #include "core/wifi.h"
 #include "lang/language.h"
+#include "player/media.h"
 #include "ui/page_common.h"
 #include "ui/ui_keyboard.h"
+#include "ui/ui_player.h"
 #include "ui/ui_style.h"
+
+extern media_t *media; // ui_player's active playback handle
 
 /**
  * Poster wall layout: 5x2 portrait posters per page, sized per UI variant.
@@ -50,12 +58,17 @@
 
 typedef enum {
     PLEX_ST_NO_WIFI = 0,
-    PLEX_ST_SETUP,   // pick a discovered server / enter one manually
-    PLEX_ST_LINK,    // plex.tv/link code sign-in (keyboard/SD-file fallbacks live here too)
-    PLEX_ST_LOADING, // connect + library fetch in flight
-    PLEX_ST_BROWSE,  // poster wall
+    PLEX_ST_SETUP,     // pick a discovered server / enter one manually
+    PLEX_ST_LINK,      // plex.tv/link code sign-in (keyboard/SD-file fallbacks live here too)
+    PLEX_ST_LOADING,   // connect + library fetch in flight
+    PLEX_ST_BROWSE,    // poster wall
+    PLEX_ST_BUFFERING, // stream download building the playback head start
     PLEX_ST_ERROR,
 } plex_ui_state_t;
+
+#define PLEX_STREAM_KBPS       12000
+#define PLEX_BUFFER_START      (8 * 1024 * 1024) // head start before the player opens the file
+#define PLEX_MIN_FREE_SD_BYTES (2LL * 1024 * 1024 * 1024)
 
 typedef enum {
     PLEX_JOB_NONE = 0,
@@ -124,6 +137,7 @@ typedef struct {
 
     bool detail_open;
     bool link_failed; // last plex.tv code request/poll failed or expired
+    bool playing;     // fullscreen player active; keys route to mplayer
 
     // Widgets
     lv_obj_t *header;
@@ -585,11 +599,64 @@ static void plex_detail_open(void) {
     snprintf(text, sizeof(text), "%s: %dh %02dm\n%s\n\n%s",
              _lang("Duration"), m->duration_min / 60, m->duration_min % 60,
              m->watched ? _lang("Watched") : _lang("Unwatched"),
-             _lang("Streaming playback arrives in a later update."));
+             _lang("Click the dial to play.\nFunc button or scroll to go back."));
     lv_label_set_text(lv_msgbox_get_title(g_plex.detail), title);
     lv_label_set_text(lv_msgbox_get_text(g_plex.detail), text);
     lv_obj_clear_flag(g_plex.detail, LV_OBJ_FLAG_HIDDEN);
     g_plex.detail_open = true;
+}
+
+/**
+ * Playback: server transcodes/remuxes to MPEG-TS, the download thread grows
+ * a file on the SD card, and the existing TS player reads it.
+ */
+static bool plex_sd_has_space(void) {
+    struct statvfs vfs;
+    if (statvfs("/mnt/extsd", &vfs) != 0) {
+        return false;
+    }
+    return (long long)vfs.f_bavail * vfs.f_bsize >= PLEX_MIN_FREE_SD_BYTES;
+}
+
+static void plex_start_playback(void) {
+    if (!g_plex.movie_count) {
+        return;
+    }
+    plex_movie_t *m = &g_plex.movies[g_plex.cur_sel];
+
+    plex_detail_close();
+    if (!plex_sd_has_space()) {
+        plex_show_status(_lang("Playback needs an SD card with at least 2 GB free.\nStreaming buffers the movie onto the card while it plays."));
+        return;
+    }
+    if (!plexstream_begin(m, 0, PLEX_STREAM_KBPS)) {
+        plex_show_status(_lang("Could not start the stream."));
+        return;
+    }
+
+    plex_enter_state_common();
+    g_plex.state = PLEX_ST_BUFFERING;
+    char buf[160];
+    snprintf(buf, sizeof(buf), "%s %s", _lang("Plex - Preparing"), m->title);
+    plex_set_header(buf);
+    plex_show_status(_lang("Asking the server for the stream..."));
+    plex_set_hint(_lang("Click to cancel"));
+}
+
+static void plex_launch_player(void) {
+    plex_movie_t *m = &g_plex.movies[g_plex.cur_sel];
+    g_plex.playing = true;
+    app_state_push(APP_STATE_PLAYBACK);
+    mplayer_file(PLEXSTREAM_FILE);
+    // The growing TS misreports its length; show the movie's real runtime
+    media_override_duration(media, (uint32_t)m->duration_min * 60000u);
+}
+
+static void plex_end_playback(void) {
+    g_plex.playing = false;
+    plexstream_stop();
+    app_state_push(APP_STATE_SUBMENU);
+    plex_state_browse();
 }
 
 /**
@@ -708,6 +775,27 @@ static void plex_timer_cb(lv_timer_t *timer) {
         }
     }
 
+    if (g_plex.state == PLEX_ST_BUFFERING) {
+        if (plexstream_auth_failed()) {
+            plexstream_stop();
+            plex_state_link();
+            return;
+        }
+        if (plexstream_failed()) {
+            plexstream_stop();
+            plex_state_error(_lang("The server could not stream this movie.\nCheck that the Plex server allows transcoding."));
+            return;
+        }
+        long bytes = plexstream_bytes();
+        if (bytes >= PLEX_BUFFER_START || (bytes > 0 && plexstream_complete())) {
+            plex_launch_player();
+            return;
+        }
+        char buf[96];
+        snprintf(buf, sizeof(buf), "%s %ld MB...", _lang("Buffering"), bytes / (1024 * 1024));
+        plex_show_status(buf);
+    }
+
     if (g_plex.state == PLEX_ST_BROWSE) {
         // Fill any visible cells whose posters have arrived since last paint
         int page = g_plex.cur_sel / PLEX_PAGE_CNT;
@@ -784,6 +872,21 @@ static void plex_setup_row_activate(void) {
 }
 
 static void plex_key(uint8_t key) {
+    if (g_plex.playing) {
+        if (mplayer_on_key(key)) {
+            plex_end_playback();
+        }
+        return;
+    }
+
+    if (g_plex.state == PLEX_ST_BUFFERING) {
+        if (key == DIAL_KEY_CLICK || key == DIAL_KEY_PRESS) {
+            plexstream_stop();
+            plex_state_browse();
+        }
+        return;
+    }
+
     if (keyboard_active()) {
         if (key == DIAL_KEY_UP || key == DIAL_KEY_DOWN) {
             keyboard_scroll(key);
@@ -794,8 +897,9 @@ static void plex_key(uint8_t key) {
     }
 
     if (g_plex.detail_open) {
-        if (key == DIAL_KEY_CLICK || key == RIGHT_KEY_CLICK ||
-            key == DIAL_KEY_UP || key == DIAL_KEY_DOWN) {
+        if (key == DIAL_KEY_CLICK) {
+            plex_start_playback();
+        } else if (key == RIGHT_KEY_CLICK || key == DIAL_KEY_UP || key == DIAL_KEY_DOWN) {
             plex_detail_close();
         }
         return;
@@ -971,6 +1075,10 @@ static void page_plex_enter(void) {
 static void page_plex_exit(void) {
     plex_invalidate_pending_work();
 
+    // Safety net: never leave a download or transcode session running
+    g_plex.playing = false;
+    plexstream_stop();
+
     if (g_plex.timer) {
         lv_timer_del(g_plex.timer);
         g_plex.timer = NULL;
@@ -992,6 +1100,16 @@ static void page_plex_on_click(uint8_t key, int sel) {
 }
 
 static void page_plex_on_right_button(bool is_short) {
+    if (g_plex.playing) {
+        if (mplayer_on_key(is_short ? RIGHT_KEY_CLICK : RIGHT_KEY_PRESS)) {
+            plex_end_playback();
+        }
+        return;
+    }
+    if (g_plex.state == PLEX_ST_BUFFERING) {
+        return;
+    }
+
     if (keyboard_active()) {
         if (is_short) {
             plex_commit_keyboard_text();
