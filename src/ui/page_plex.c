@@ -376,11 +376,20 @@ static void plex_state_loading(void) {
     plex_post_job(PLEX_JOB_CONNECT);
 }
 
+static void plex_state_loading(void);
+
 static void plex_state_token(void) {
+    // The no-typing path first: a plextoken.txt on the SD card signs in
+    // without ever showing the keyboard.
+    if (plex_token_from_sdcard()) {
+        plex_state_loading();
+        return;
+    }
+
     plex_enter_state_common();
     g_plex.state = PLEX_ST_TOKEN;
     plex_set_header(_lang("Plex - Sign In"));
-    plex_show_status(_lang("This server requires a Plex token.\nFind it in a signed-in Plex app, or in any Plex Web\nURL as the X-Plex-Token parameter.\n\nType the token, then click the Func button to submit."));
+    plex_show_status(_lang("This server requires a Plex token.\nEasiest: on your computer, save the token into a file named\nplextoken.txt on this SD card - it is picked up automatically,\neven if you insert the card right now.\n\nOr type the token below, then click the Func button to submit.\n(Find your token in any Plex Web URL as X-Plex-Token.)"));
     plex_set_hint(_lang("Func button: Click to submit, Hold to erase"));
     g_plex.pending_input = PLEX_INPUT_TOKEN;
     keyboard_set_text(g_setting.plex.token);
@@ -568,6 +577,14 @@ static void plex_timer_cb(lv_timer_t *timer) {
             break;
         }
         return;
+    }
+
+    if (g_plex.state == PLEX_ST_TOKEN) {
+        // Sign in the moment an SD card carrying plextoken.txt shows up
+        if (plex_token_from_sdcard()) {
+            plex_state_loading();
+            return;
+        }
     }
 
     if (g_plex.state == PLEX_ST_LOADING) {
@@ -813,6 +830,12 @@ static void page_plex_enter(void) {
     if (!wifi_connected_ssid(ssid, sizeof(ssid))) {
         plex_state_no_wifi();
         return;
+    }
+
+    // A pre-provisioned SD card (plextoken.txt with optional server line)
+    // completes setup without any on-goggle input.
+    if (!g_setting.plex.token[0] || !g_setting.plex.host[0]) {
+        plex_token_from_sdcard();
     }
 
     if (g_plex.movies && g_plex.movie_count > 0) {

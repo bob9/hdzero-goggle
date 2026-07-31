@@ -87,14 +87,20 @@ UUID, generated once and stored), `X-Plex-Product=HDZero Goggle`,
 
 ### Authentication for a local server
 
-Two supported paths, in this order of preference in the UI:
+Supported paths, in this order of preference in the UI (the goggle has no real
+keyboard, so typing-free options come first):
 
-1. **plex.tv PIN link** (needs internet once): `POST https://plex.tv/api/v2/pins`
-   → show the 4-character code on the goggle screen, user enters it at
-   plex.tv/link on their phone, goggle polls the pin endpoint until it returns
-   a token. Best UX, no typing on the goggle.
-2. **Manual token entry** via `ui_keyboard` — works fully offline, good escape
-   hatch (and for servers with "Advertise as player"/managed setups).
+1. **SD-card token file** (implemented, primary): the user saves their
+   `X-Plex-Token` into `plextoken.txt` on the SD card root (line 1 = token,
+   optional line 2 = `host[:port]`). The goggle adopts it automatically — on
+   page entry, when the sign-in screen is shown, and live when a card is
+   inserted while the sign-in screen is up. Zero on-goggle typing.
+2. **Server "allow without auth" allowlist** (zero code): adding the home
+   subnet in Plex's Settings → Network skips authentication entirely on the
+   LAN.
+3. **Manual token entry** via `ui_keyboard` — the on-device fallback.
+4. **plex.tv PIN link** (future work, not implemented): needs a TLS stack for
+   plex.tv; would show a 4-character code the user enters at plex.tv/link.
 
 The token is stored in settings and reused; Plex tokens don't expire in
 practice.

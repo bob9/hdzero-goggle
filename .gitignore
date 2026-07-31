@@ -23,3 +23,4 @@ utilities/font/out
 # nix related
 result
 result-*
+.claude/settings.local.json

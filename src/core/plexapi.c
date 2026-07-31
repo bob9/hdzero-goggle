@@ -60,6 +60,63 @@ void plex_settings_save(void) {
     ini_puts("plex", "client_id", g_setting.plex.client_id, SETTING_INI);
 }
 
+#define PLEX_TOKEN_FILE "/mnt/extsd/plextoken.txt"
+
+// Trim surrounding whitespace/newlines from editors on any OS
+static char *plex_trim(char *s) {
+    while (*s == ' ' || *s == '\t') {
+        s++;
+    }
+    char *end = s + strlen(s);
+    while (end > s && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == ' ' || end[-1] == '\t')) {
+        *--end = '\0';
+    }
+    return s;
+}
+
+bool plex_token_from_sdcard(void) {
+    FILE *fp = fopen(PLEX_TOKEN_FILE, "r");
+    if (!fp) {
+        return false;
+    }
+
+    char token_line[PLEX_TOKEN_MAX * 2] = "";
+    char host_line[PLEX_HOST_MAX * 2] = "";
+    const bool got = fgets(token_line, sizeof(token_line), fp) != NULL;
+    if (got) {
+        // Optional second line: host[:port], for fully typing-free setup
+        if (!fgets(host_line, sizeof(host_line), fp)) {
+            host_line[0] = '\0';
+        }
+    }
+    fclose(fp);
+    if (!got) {
+        return false;
+    }
+
+    char *token = plex_trim(token_line);
+    if (!*token) {
+        return false;
+    }
+    snprintf(g_setting.plex.token, sizeof(g_setting.plex.token), "%s", token);
+
+    char *host = plex_trim(host_line);
+    if (*host) {
+        char *colon = strrchr(host, ':');
+        int port = 32400;
+        if (colon) {
+            *colon = '\0';
+            port = atoi(colon + 1);
+        }
+        snprintf(g_setting.plex.host, sizeof(g_setting.plex.host), "%s", host);
+        g_setting.plex.port = port > 0 ? port : 32400;
+    }
+
+    plex_settings_save();
+    LOGI("plex: adopted token%s from %s", *host ? " and server" : "", PLEX_TOKEN_FILE);
+    return true;
+}
+
 static int plex_connect(const char *host, int port) {
     char port_str[8];
     struct addrinfo hints = {

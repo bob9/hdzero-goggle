@@ -78,6 +78,13 @@ bool plex_poster_cached(const plex_movie_t *movie, char *path_out, int path_size
  */
 void plex_settings_save(void);
 
+/**
+ * Adopt a token from /mnt/extsd/plextoken.txt if present (first line,
+ * whitespace trimmed) - the no-typing alternative to keyboard entry.
+ * Returns true if a token was read and saved.
+ */
+bool plex_token_from_sdcard(void);
+
 #ifdef __cplusplus
 }
 #endif
