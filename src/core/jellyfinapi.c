@@ -605,15 +605,17 @@ bool jf_token_from_sdcard(void) {
 
 void jf_stream_path(char *buf, int size, const plex_movie_t *movie, int offset_s, int max_kbps,
                     const char *play_session) {
-    // Continuous transcoded/remuxed TS over one HTTP response; the token
-    // travels as api_key since the download path sends no custom headers.
-    // Stream copy is allowed so already-compatible H.264 sources remux
-    // instead of transcoding. The bitrate implies the resolution tier
-    // (1080p/720p/480p) so a lighter cap also lightens the encode.
+    // Continuous transcoded TS over one HTTP response; the token travels
+    // as api_key since the download path sends no custom headers.
+    // Stream copy must be explicitly DISABLED (Jellyfin defaults it on):
+    // copied source video can be interlaced or high-level H.264, which
+    // wedges the goggle's hardware decoder solid. A forced transcode
+    // yields normalized progressive H.264 the player is known to handle.
+    // The bitrate implies the resolution tier (1080p/720p/480p).
     snprintf(buf, size,
              "/Videos/%s/stream.ts?VideoCodec=h264&AudioCodec=aac"
              "&VideoBitrate=%d000&AudioBitrate=192000&MaxWidth=%d"
-             "&AllowVideoStreamCopy=true&AllowAudioStreamCopy=true"
+             "&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false"
              "&SubtitleMethod=None&StartTimeTicks=%lld&DeviceId=%s"
              "&PlaySessionId=%s&api_key=%s",
              movie->rating_key, max_kbps,
