@@ -68,6 +68,7 @@ typedef enum {
 } plex_ui_state_t;
 
 #define PLEX_STREAM_KBPS       12000
+#define PLEX_STREAM_KBPS_LOW   4000 // retry quality: 720p-class encode a weak server can manage
 #define PLEX_BUFFER_START      (8 * 1024 * 1024) // head start before the player opens the file
 #define PLEX_MIN_FREE_SD_BYTES (2LL * 1024 * 1024 * 1024)
 
@@ -139,6 +140,12 @@ typedef struct {
     bool detail_open;
     bool link_failed; // last plex.tv code request/poll failed or expired
     bool playing;     // fullscreen player active; keys route to mplayer
+
+    // Buffering: download rate sampling + one lower-quality retry
+    bool stream_retried;
+    long buf_last_bytes;
+    uint32_t buf_last_ms;
+    long buf_rate; // bytes/sec over the last sample window
 
     // Widgets
     lv_obj_t *header;
@@ -704,6 +711,10 @@ static void plex_start_playback(void) {
         plex_show_status(_lang("Could not start the stream."));
         return;
     }
+    g_plex.stream_retried = false;
+    g_plex.buf_last_bytes = 0;
+    g_plex.buf_last_ms = lv_tick_get();
+    g_plex.buf_rate = -1;
 
     plex_enter_state_common();
     g_plex.state = PLEX_ST_BUFFERING;
@@ -856,7 +867,19 @@ static void plex_timer_cb(lv_timer_t *timer) {
         }
         if (plexstream_failed()) {
             plexstream_stop();
-            plex_state_error(_lang("The server could not stream this movie.\nCheck that the Plex server allows transcoding."));
+            // One retry at 720p/4 Mbps: a server whose transcoder can't keep
+            // up (or crashed) at 1080p often manages the lighter encode.
+            if (!g_plex.stream_retried && g_plex.movie_count) {
+                g_plex.stream_retried = true;
+                if (plexstream_begin(&g_plex.movies[g_plex.cur_sel], 0, PLEX_STREAM_KBPS_LOW)) {
+                    g_plex.buf_last_bytes = 0;
+                    g_plex.buf_last_ms = lv_tick_get();
+                    g_plex.buf_rate = -1;
+                    plex_show_status(_lang("The server is struggling with this movie.\nRetrying at a lower quality..."));
+                    return;
+                }
+            }
+            plex_state_error(_lang("The server could not stream this movie.\nCheck that the server can transcode it (a 4K/HEVC movie\nneeds hardware transcoding enabled on the server)."));
             return;
         }
         long bytes = plexstream_bytes();
@@ -864,8 +887,26 @@ static void plex_timer_cb(lv_timer_t *timer) {
             plex_launch_player();
             return;
         }
-        char buf[96];
-        snprintf(buf, sizeof(buf), "%s %ld MB...", _lang("Buffering"), bytes / (1024 * 1024));
+
+        // Sample the download rate every ~2 s so a struggling server is
+        // visible instead of a silently frozen byte count
+        uint32_t now = lv_tick_get();
+        if (now - g_plex.buf_last_ms >= 2000) {
+            g_plex.buf_rate = (bytes - g_plex.buf_last_bytes) * 1000 / (long)(now - g_plex.buf_last_ms);
+            g_plex.buf_last_bytes = bytes;
+            g_plex.buf_last_ms = now;
+        }
+        char buf[128];
+        if (g_plex.buf_rate < 0) {
+            snprintf(buf, sizeof(buf), "%s %ld MB...", _lang("Buffering"), bytes / (1024 * 1024));
+        } else if (g_plex.buf_rate < 32 * 1024) {
+            snprintf(buf, sizeof(buf), "%s %ld MB (%ld KB/s)\n%s", _lang("Buffering"),
+                     bytes / (1024 * 1024), g_plex.buf_rate / 1024,
+                     _lang("The server is converting this movie very slowly."));
+        } else {
+            snprintf(buf, sizeof(buf), "%s %ld MB (%.1f MB/s)...", _lang("Buffering"),
+                     bytes / (1024 * 1024), (double)g_plex.buf_rate / (1024 * 1024));
+        }
         plex_show_status(buf);
     }
 

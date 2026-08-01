@@ -583,18 +583,47 @@ bool jf_token_from_sdcard(void) {
     return true;
 }
 
-void jf_stream_path(char *buf, int size, const plex_movie_t *movie, int offset_s, int max_kbps) {
+void jf_stream_path(char *buf, int size, const plex_movie_t *movie, int offset_s, int max_kbps,
+                    const char *play_session) {
     // Continuous transcoded/remuxed TS over one HTTP response; the token
     // travels as api_key since the download path sends no custom headers.
+    // Stream copy is allowed so already-compatible H.264 sources remux
+    // instead of transcoding; the retry path drops to 720p to lighten the
+    // encode on servers that can't keep up at 1080p.
     snprintf(buf, size,
              "/Videos/%s/stream.ts?VideoCodec=h264&AudioCodec=aac"
-             "&VideoBitrate=%d000&AudioBitrate=192000&MaxWidth=1920"
-             "&SubtitleMethod=None&StartTimeTicks=%lld&DeviceId=%s&api_key=%s",
-             movie->rating_key, max_kbps,
+             "&VideoBitrate=%d000&AudioBitrate=192000&MaxWidth=%d"
+             "&AllowVideoStreamCopy=true&AllowAudioStreamCopy=true"
+             "&SubtitleMethod=None&StartTimeTicks=%lld&DeviceId=%s"
+             "&PlaySessionId=%s&api_key=%s",
+             movie->rating_key, max_kbps, max_kbps <= 6000 ? 1280 : 1920,
              (long long)offset_s * 10000000LL,
-             jf_device_id(), g_setting.jellyfin.token);
+             jf_device_id(), play_session, g_setting.jellyfin.token);
 }
 
 int jf_stream_download(const char *path, const char *dest_file, lan_stream_state_t *state) {
     return lanhttp_download(g_setting.jellyfin.host, g_setting.jellyfin.port, path, NULL, dest_file, state);
+}
+
+void jf_playback_report(const char *item_id, const char *play_session,
+                        jf_play_event_t event, long long pos_ticks) {
+    static const char *paths[] = {
+        "/Sessions/Playing",
+        "/Sessions/Playing/Progress",
+        "/Sessions/Playing/Stopped",
+    };
+    char headers[512];
+    jf_headers(headers, sizeof(headers), true);
+
+    char body[512];
+    snprintf(body, sizeof(body),
+             "{\"ItemId\":\"%s\",\"PlaySessionId\":\"%s\",\"PositionTicks\":%lld,"
+             "\"PlayMethod\":\"Transcode\",\"CanSeek\":true,\"IsPaused\":false}",
+             item_id, play_session, pos_ticks);
+
+    int status = lanhttp_request(g_setting.jellyfin.host, g_setting.jellyfin.port,
+                                 "POST", paths[event], headers, body, NULL, NULL);
+    if (status < 200 || status >= 300) {
+        LOGI("jellyfin: playback report %d returned %d", event, status);
+    }
 }

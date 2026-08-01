@@ -16,8 +16,13 @@
 typedef struct {
     plex_stream_state_t io;
     pthread_t thread;
+    pthread_t reporter;
+    bool reporter_active;
     bool active;
     int backend;
+    int offset_s;
+    time_t started_at;
+    char item_id[64];
     char path[768];
     char session[24];
 } plexstream_t;
@@ -34,6 +39,31 @@ static void *plexstream_thread(void *arg) {
     return NULL;
 }
 
+// Keeps Jellyfin's transcoder alive: the server pauses any transcode that
+// runs ~3 min ahead of the last reported playback position, and this client
+// downloads far ahead of real time. Wall-clock elapsed tracks the viewer
+// closely enough to keep the throttler satisfied.
+static void *plexstream_reporter_thread(void *arg) {
+    (void)arg;
+    jf_playback_report(g_stream.item_id, g_stream.session, JF_PLAY_START,
+                       (long long)g_stream.offset_s * 10000000LL);
+    int ticks = 0;
+    while (!g_stream.io.cancel && !g_stream.io.done) {
+        sleep(1);
+        if (++ticks < 10) {
+            continue;
+        }
+        ticks = 0;
+        long long pos_s = g_stream.offset_s + (long long)(time(NULL) - g_stream.started_at);
+        jf_playback_report(g_stream.item_id, g_stream.session, JF_PLAY_PROGRESS,
+                           pos_s * 10000000LL);
+    }
+    long long pos_s = g_stream.offset_s + (long long)(time(NULL) - g_stream.started_at);
+    jf_playback_report(g_stream.item_id, g_stream.session, JF_PLAY_STOPPED,
+                       pos_s * 10000000LL);
+    return NULL;
+}
+
 bool plexstream_begin(const plex_movie_t *movie, int offset_s, int max_kbps) {
     if (g_stream.active) {
         plexstream_stop();
@@ -43,10 +73,13 @@ bool plexstream_begin(const plex_movie_t *movie, int offset_s, int max_kbps) {
     unlink(PLEXSTREAM_FILE);
 
     g_stream.backend = g_setting.plex.backend;
+    g_stream.offset_s = offset_s;
+    g_stream.started_at = time(NULL);
+    snprintf(g_stream.item_id, sizeof(g_stream.item_id), "%s", movie->rating_key);
     snprintf(g_stream.session, sizeof(g_stream.session), "hdzg%08x", (unsigned)time(NULL));
 
     if (g_stream.backend == MEDIA_BACKEND_JELLYFIN) {
-        jf_stream_path(g_stream.path, sizeof(g_stream.path), movie, offset_s, max_kbps);
+        jf_stream_path(g_stream.path, sizeof(g_stream.path), movie, offset_s, max_kbps, g_stream.session);
     } else {
         // Universal transcode to a single continuous MPEG-TS HTTP stream.
         // directStream=1 lets compatible H.264 video pass through as a cheap
@@ -68,6 +101,9 @@ bool plexstream_begin(const plex_movie_t *movie, int offset_s, int max_kbps) {
         LOGE("plexstream: thread create failed");
         return false;
     }
+    g_stream.reporter_active =
+        g_stream.backend == MEDIA_BACKEND_JELLYFIN &&
+        pthread_create(&g_stream.reporter, NULL, plexstream_reporter_thread, NULL) == 0;
     g_stream.active = true;
     LOGI("plexstream: session %s started for %s at %ds (backend %d)",
          g_stream.session, movie->rating_key, offset_s, g_stream.backend);
@@ -97,6 +133,10 @@ void plexstream_stop(void) {
 
     g_stream.io.cancel = true;
     pthread_join(g_stream.thread, NULL);
+    if (g_stream.reporter_active) {
+        pthread_join(g_stream.reporter, NULL);
+        g_stream.reporter_active = false;
+    }
     g_stream.active = false;
 
     if (g_stream.backend != MEDIA_BACKEND_JELLYFIN) {

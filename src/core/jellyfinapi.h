@@ -38,10 +38,26 @@ int jf_quickconnect_poll(const char *secret);
 bool jf_token_from_sdcard(void);
 
 /** Build the transcoded-TS stream request path for a movie. */
-void jf_stream_path(char *buf, int size, const plex_movie_t *movie, int offset_s, int max_kbps);
+void jf_stream_path(char *buf, int size, const plex_movie_t *movie, int offset_s, int max_kbps,
+                    const char *play_session);
 
 /** Growing-file stream download against the Jellyfin server. */
 int jf_stream_download(const char *path, const char *dest_file, lan_stream_state_t *state);
+
+typedef enum {
+    JF_PLAY_START = 0,
+    JF_PLAY_PROGRESS,
+    JF_PLAY_STOPPED,
+} jf_play_event_t;
+
+/**
+ * Playback session reporting (POST /Sessions/Playing[...]). Jellyfin pauses
+ * a transcode that runs ~3 min ahead of the last reported position, so a
+ * client that never reports stalls every stream; regular progress keeps the
+ * transcoder running (and feeds watched/resume state as a bonus).
+ */
+void jf_playback_report(const char *item_id, const char *play_session,
+                        jf_play_event_t event, long long pos_ticks);
 
 void jf_settings_save(void);
 
