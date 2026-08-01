@@ -22,6 +22,9 @@ bool jf_server_reachable(const char *host, int port);
 /** Full movie listing, sorted by title. Caller owns the malloc'd array. */
 int jf_load_movies(plex_movie_t **out, int *out_count, volatile int *progress);
 
+/** Every episode of one series in airing order (kind = PLEX_ITEM_EPISODE). */
+int jf_load_episodes(const char *series_id, plex_movie_t **out, int *out_count, volatile int *progress);
+
 int jf_fetch_poster(const plex_movie_t *movie, int width, int height, char *path_out, int path_size);
 bool jf_poster_cached(const plex_movie_t *movie, char *path_out, int path_size);
 

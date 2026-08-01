@@ -335,7 +335,7 @@ static void jf_ensure_user_id(void) {
     free(body);
 }
 
-int jf_load_movies(plex_movie_t **out, int *out_count, volatile int *progress) {
+static int jf_load_items(const char *base_query, plex_movie_t **out, int *out_count, volatile int *progress) {
     jf_ensure_user_id();
 
     plex_movie_t *list = malloc(sizeof(plex_movie_t) * PLEX_MOVIES_MAX);
@@ -349,11 +349,10 @@ int jf_load_movies(plex_movie_t **out, int *out_count, volatile int *progress) {
     int count = 0;
     long long total = -1;
     do {
-        char path[384];
+        char path[512];
         snprintf(path, sizeof(path),
-                 "/Items?IncludeItemTypes=Movie&Recursive=true&SortBy=SortName"
-                 "&Fields=ProductionYear&StartIndex=%d&Limit=%d%s%s",
-                 count, JF_CHUNK,
+                 "%s&StartIndex=%d&Limit=%d%s%s",
+                 base_query, count, JF_CHUNK,
                  g_setting.jellyfin.user_id[0] ? "&userId=" : "",
                  g_setting.jellyfin.user_id[0] ? g_setting.jellyfin.user_id : "");
 
@@ -385,6 +384,13 @@ int jf_load_movies(plex_movie_t **out, int *out_count, volatile int *progress) {
             }
             m->year = (int)json_ll(item, "ProductionYear", 0);
             m->duration_min = (int)(json_ll(item, "RunTimeTicks", 0) / 600000000LL);
+            char type[16] = "";
+            json_str(item, "Type", type, sizeof(type));
+            m->kind = strcmp(type, "Series") == 0    ? PLEX_ITEM_SERIES
+                      : strcmp(type, "Episode") == 0 ? PLEX_ITEM_EPISODE
+                                                     : PLEX_ITEM_MOVIE;
+            m->season = (int16_t)json_ll(item, "ParentIndexNumber", 0);
+            m->episode = (int16_t)json_ll(item, "IndexNumber", 0);
             const char *ud = json_field(item, "UserData");
             if (ud && *ud == '{') {
                 m->watched = json_true(ud, "Played");
@@ -424,6 +430,20 @@ int jf_load_movies(plex_movie_t **out, int *out_count, volatile int *progress) {
     *out = list;
     *out_count = count;
     return PLEX_OK;
+}
+
+int jf_load_movies(plex_movie_t **out, int *out_count, volatile int *progress) {
+    // One query: movies and TV series interleave alphabetically
+    return jf_load_items("/Items?IncludeItemTypes=Movie,Series&Recursive=true&SortBy=SortName"
+                         "&Fields=ProductionYear",
+                         out, out_count, progress);
+}
+
+int jf_load_episodes(const char *series_id, plex_movie_t **out, int *out_count, volatile int *progress) {
+    char base[160];
+    // The Shows endpoint returns every season's episodes in airing order
+    snprintf(base, sizeof(base), "/Shows/%s/Episodes?Fields=ProductionYear", series_id);
+    return jf_load_items(base, out, out_count, progress);
 }
 
 static const char *jf_cache_dir(void) {

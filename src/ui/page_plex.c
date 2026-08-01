@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 #include <log/log.h>
@@ -84,6 +85,7 @@ typedef enum {
     PLEX_JOB_NONE = 0,
     PLEX_JOB_DISCOVER,
     PLEX_JOB_CONNECT,
+    PLEX_JOB_EPISODES,
     PLEX_JOB_POSTERS,
     PLEX_JOB_PIN,
 } plex_job_t;
@@ -115,10 +117,24 @@ typedef struct {
     plex_movie_t *res_movies;
     int res_count;
 
+    // JOB_EPISODES input + results
+    char episodes_key[40];
+    bool episodes_done;
+    int episodes_rc;
+    plex_movie_t *res_episodes;
+    int res_episode_count;
+
     // JOB_POSTERS input: the worker only ever sees this private copy of the
     // visible page, so the UI can free/replace its own movie list at will.
     plex_movie_t poster_movies[PLEX_PAGE_CNT];
     int poster_count;
+
+    // Background poster prefetch: a worker-owned copy of the whole grid
+    // list, walked once whenever the visible page is fully cached, so later
+    // pages open instantly instead of downloading on arrival.
+    plex_movie_t *prefetch;
+    int prefetch_count;
+    int prefetch_pos;
 
     // JOB_PIN results
     bool pin_code_ready; // a fresh plex.tv/link code is in pin_code
@@ -148,6 +164,16 @@ typedef struct {
     bool detail_open;
     bool link_failed; // last plex.tv code request/poll failed or expired
     bool playing;     // fullscreen player active; keys route to mplayer
+
+    // Episode drill-down: the library grid is parked here while the grid
+    // shows one series' episodes
+    bool loading_episodes; // the in-flight LOADING state is an episode fetch
+    bool in_series;
+    char series_title[96];
+    plex_movie_t *lib_movies;
+    int lib_movie_count;
+    int lib_cur_sel;
+    char lib_section_title[64];
 
     // Buffering: download rate sampling + one lower-quality retry
     bool stream_retried;
@@ -212,6 +238,28 @@ static int active_fetch_poster(const plex_movie_t *m, int w, int h, char *path, 
     return backend_is_jf() ? jf_fetch_poster(m, w, h, path, size) : plex_fetch_poster(m, w, h, path, size);
 }
 
+static int plex_title_cmp(const void *a, const void *b) {
+    return strcasecmp(((const plex_movie_t *)a)->title, ((const plex_movie_t *)b)->title);
+}
+
+// Hand the worker its own copy of the grid list for background poster
+// prefetching; replaces (and frees) any previous copy.
+static void plex_prefetch_set(const plex_movie_t *list, int count) {
+    plex_movie_t *copy = NULL;
+    if (list && count > 0) {
+        copy = malloc(sizeof(plex_movie_t) * count);
+        if (copy) {
+            memcpy(copy, list, sizeof(plex_movie_t) * count);
+        }
+    }
+    pthread_mutex_lock(&g_work.lock);
+    free(g_work.prefetch);
+    g_work.prefetch = copy;
+    g_work.prefetch_count = copy ? count : 0;
+    g_work.prefetch_pos = 0;
+    pthread_mutex_unlock(&g_work.lock);
+}
+
 /**
  * Worker thread: every network call lives here, never on the LVGL thread.
  */
@@ -260,7 +308,7 @@ static void *plex_worker_thread(void *arg) {
                     if (!g_setting.jellyfin.token[0]) {
                         rc = PLEX_ERR_AUTH; // no token yet: go to Quick Connect
                     } else {
-                        snprintf(title, sizeof(title), "Movies");
+                        snprintf(title, sizeof(title), "Library");
                         rc = jf_load_movies(&movies, &count, &g_work.progress);
                     }
                 }
@@ -269,10 +317,47 @@ static void *plex_worker_thread(void *arg) {
                          ? PLEX_OK
                          : PLEX_ERR_NET;
                 if (rc == PLEX_OK) {
-                    rc = plex_find_movie_section(key, sizeof(key), title, sizeof(title));
-                }
-                if (rc == PLEX_OK) {
-                    rc = plex_load_movies(key, &movies, &count, &g_work.progress);
+                    // Movies and TV shows live in separate sections; load
+                    // whichever exist and interleave them alphabetically
+                    plex_movie_t *shows = NULL;
+                    int show_count = 0;
+                    char skey[32], stitle[64] = "";
+                    int mrc = plex_find_section("movie", key, sizeof(key), title, sizeof(title));
+                    if (mrc == PLEX_OK) {
+                        mrc = plex_load_movies(key, &movies, &count, &g_work.progress);
+                    }
+                    int trc = plex_find_section("show", skey, sizeof(skey), stitle, sizeof(stitle));
+                    if (trc == PLEX_OK) {
+                        trc = plex_load_shows(skey, &shows, &show_count, &g_work.progress);
+                    }
+
+                    if (mrc == PLEX_ERR_AUTH || trc == PLEX_ERR_AUTH) {
+                        rc = PLEX_ERR_AUTH;
+                        free(movies);
+                        free(shows);
+                        movies = NULL;
+                        count = 0;
+                    } else if (mrc != PLEX_OK && trc != PLEX_OK) {
+                        rc = (mrc == PLEX_ERR_NOMOVIE && trc == PLEX_ERR_NOMOVIE)
+                                 ? PLEX_ERR_NOMOVIE
+                                 : PLEX_ERR_NET;
+                    } else {
+                        if (show_count > 0) {
+                            plex_movie_t *merged = realloc(movies, sizeof(plex_movie_t) * (count + show_count));
+                            if (merged) {
+                                memcpy(merged + count, shows, sizeof(plex_movie_t) * show_count);
+                                movies = merged;
+                                count += show_count;
+                                qsort(movies, count, sizeof(plex_movie_t), plex_title_cmp);
+                            }
+                        }
+                        free(shows);
+                        if (mrc == PLEX_OK && trc == PLEX_OK) {
+                            snprintf(title, sizeof(title), "%s", _lang("Movies & TV"));
+                        } else if (trc == PLEX_OK) {
+                            snprintf(title, sizeof(title), "%s", stitle);
+                        }
+                    }
                 }
             }
 
@@ -285,6 +370,31 @@ static void *plex_worker_thread(void *arg) {
                 g_work.connect_done = true;
             } else {
                 free(movies);
+            }
+            pthread_mutex_unlock(&g_work.lock);
+            break;
+        }
+
+        case PLEX_JOB_EPISODES: {
+            char skey[40];
+            pthread_mutex_lock(&g_work.lock);
+            snprintf(skey, sizeof(skey), "%s", g_work.episodes_key);
+            pthread_mutex_unlock(&g_work.lock);
+
+            plex_movie_t *episodes = NULL;
+            int ep_count = 0;
+            int rc = backend_is_jf()
+                         ? jf_load_episodes(skey, &episodes, &ep_count, &g_work.progress)
+                         : plex_load_episodes(skey, &episodes, &ep_count, &g_work.progress);
+
+            pthread_mutex_lock(&g_work.lock);
+            if (gen == g_work.gen) {
+                g_work.episodes_rc = rc;
+                g_work.res_episodes = episodes;
+                g_work.res_episode_count = ep_count;
+                g_work.episodes_done = true;
+            } else {
+                free(episodes);
             }
             pthread_mutex_unlock(&g_work.lock);
             break;
@@ -317,7 +427,24 @@ static void *plex_worker_thread(void *arg) {
                     break;
                 }
                 if (!fetched) {
-                    break; // page fully cached (or nothing fetchable)
+                    // Visible page fully cached: advance the background
+                    // prefetch by one poster (single pass, cursor persists)
+                    plex_movie_t item;
+                    bool have = false;
+                    pthread_mutex_lock(&g_work.lock);
+                    if (gen == g_work.gen && g_work.job == PLEX_JOB_NONE &&
+                        g_work.prefetch && g_work.prefetch_pos < g_work.prefetch_count) {
+                        item = g_work.prefetch[g_work.prefetch_pos++];
+                        have = true;
+                    }
+                    pthread_mutex_unlock(&g_work.lock);
+                    if (!have) {
+                        break; // everything cached (or nothing fetchable)
+                    }
+                    char path[300];
+                    if (item.thumb[0] && !active_poster_cached(&item, path, sizeof(path))) {
+                        active_fetch_poster(&item, POSTER_W, POSTER_H, path, sizeof(path));
+                    }
                 }
             }
             break;
@@ -527,6 +654,7 @@ static void plex_state_loading(void) {
     plex_invalidate_pending_work(); // a fresh connect obsoletes older results
     plex_enter_state_common();
     g_plex.state = PLEX_ST_LOADING;
+    g_plex.loading_episodes = false;
     char buf[128];
     snprintf(buf, sizeof(buf), "%s - %s %s:%d", active_name(), _lang("Connecting to"), active_host(), active_port());
     plex_set_header(buf);
@@ -534,6 +662,45 @@ static void plex_state_loading(void) {
     plex_set_hint(_lang("Long press the Enter button to exit"));
     g_work.progress = 0;
     plex_post_job(PLEX_JOB_CONNECT);
+}
+
+static void plex_state_browse(void);
+
+// Drill into a TV series: fetch its episode list, then swap the grid to it
+static void plex_state_load_episodes(const plex_movie_t *m) {
+    plex_invalidate_pending_work();
+    pthread_mutex_lock(&g_work.lock);
+    snprintf(g_work.episodes_key, sizeof(g_work.episodes_key), "%s", m->rating_key);
+    pthread_mutex_unlock(&g_work.lock);
+    snprintf(g_plex.series_title, sizeof(g_plex.series_title), "%s", m->title);
+
+    plex_enter_state_common();
+    g_plex.state = PLEX_ST_LOADING;
+    g_plex.loading_episodes = true;
+    char buf[160];
+    snprintf(buf, sizeof(buf), "%s - %s", active_name(), m->title);
+    plex_set_header(buf);
+    plex_show_status(_lang("Loading episodes..."));
+    plex_set_hint(_lang("Long press the Enter button to exit"));
+    g_work.progress = 0;
+    plex_post_job(PLEX_JOB_EPISODES);
+}
+
+// Leave the episode grid, restoring the parked library grid
+static void plex_series_back(void) {
+    if (!g_plex.in_series) {
+        return;
+    }
+    free(g_plex.movies);
+    g_plex.movies = g_plex.lib_movies;
+    g_plex.movie_count = g_plex.lib_movie_count;
+    g_plex.cur_sel = g_plex.lib_cur_sel;
+    snprintf(g_plex.section_title, sizeof(g_plex.section_title), "%s", g_plex.lib_section_title);
+    g_plex.lib_movies = NULL;
+    g_plex.lib_movie_count = 0;
+    g_plex.in_series = false;
+    plex_prefetch_set(g_plex.movies, g_plex.movie_count);
+    plex_state_browse();
 }
 
 static void plex_state_loading(void);
@@ -616,7 +783,8 @@ static void plex_grid_paint(void) {
     int pages = (g_plex.movie_count + PLEX_PAGE_CNT - 1) / PLEX_PAGE_CNT;
 
     snprintf(buf, sizeof(buf), "%s - %s  |  %d %s  |  %s %d/%d",
-             active_name(), g_plex.section_title, g_plex.movie_count, _lang("movies"), _lang("page"), page + 1, pages);
+             active_name(), g_plex.section_title, g_plex.movie_count,
+             _lang(g_plex.in_series ? "episodes" : "titles"), _lang("page"), page + 1, pages);
     plex_set_header(buf);
 
     for (int i = 0; i < PLEX_PAGE_CNT; i++) {
@@ -630,7 +798,9 @@ static void plex_grid_paint(void) {
         }
 
         plex_movie_t *m = &g_plex.movies[seq];
-        if (m->year > 0) {
+        if (m->kind == PLEX_ITEM_EPISODE && m->season > 0) {
+            snprintf(buf, sizeof(buf), "S%dE%d %s", m->season, m->episode, m->title);
+        } else if (m->year > 0) {
             snprintf(buf, sizeof(buf), "%s (%d)", m->title, m->year);
         } else {
             snprintf(buf, sizeof(buf), "%s", m->title);
@@ -664,7 +834,9 @@ static void plex_grid_paint(void) {
 static void plex_state_browse(void) {
     plex_enter_state_common();
     g_plex.state = PLEX_ST_BROWSE;
-    plex_set_hint(_lang("Click for details. Func button: Click to refresh, Hold to forget server. Long press the Enter button to exit"));
+    plex_set_hint(_lang(g_plex.in_series
+                            ? "Click for details. Func button: back to the library. Long press the Enter button to exit"
+                            : "Click for details. Func button: Click to refresh, Hold to forget server. Long press the Enter button to exit"));
     if (g_plex.cur_sel >= g_plex.movie_count) {
         g_plex.cur_sel = 0;
     }
@@ -677,16 +849,25 @@ static void plex_detail_open(void) {
     }
     plex_movie_t *m = &g_plex.movies[g_plex.cur_sel];
     char title[128], text[256];
-    if (m->year > 0) {
+    if (m->kind == PLEX_ITEM_EPISODE && m->season > 0) {
+        snprintf(title, sizeof(title), "S%dE%d - %s", m->season, m->episode, m->title);
+    } else if (m->year > 0) {
         snprintf(title, sizeof(title), "%s (%d)", m->title, m->year);
     } else {
         snprintf(title, sizeof(title), "%s", m->title);
     }
-    snprintf(text, sizeof(text), "%s: %dh %02dm\n%s\n%s: %s\n\n%s",
-             _lang("Duration"), m->duration_min / 60, m->duration_min % 60,
-             m->watched ? _lang("Watched") : _lang("Unwatched"),
-             _lang("Quality"), plex_quality_name[plex_quality()],
-             _lang("Click the dial to play. Scroll to change quality.\nFunc button to go back."));
+    if (m->kind == PLEX_ITEM_SERIES) {
+        snprintf(text, sizeof(text), "%s\n%s\n\n%s",
+                 _lang("TV series"),
+                 m->watched ? _lang("Watched") : _lang("Unwatched"),
+                 _lang("Click the dial to see the episodes.\nFunc button to go back."));
+    } else {
+        snprintf(text, sizeof(text), "%s: %dh %02dm\n%s\n%s: %s\n\n%s",
+                 _lang("Duration"), m->duration_min / 60, m->duration_min % 60,
+                 m->watched ? _lang("Watched") : _lang("Unwatched"),
+                 _lang("Quality"), plex_quality_name[plex_quality()],
+                 _lang("Click the dial to play. Scroll to change quality.\nFunc button to go back."));
+    }
     lv_label_set_text(lv_msgbox_get_title(g_plex.detail), title);
     lv_label_set_text(lv_msgbox_get_text(g_plex.detail), text);
     lv_obj_clear_flag(g_plex.detail, LV_OBJ_FLAG_HIDDEN);
@@ -710,6 +891,9 @@ static void plex_start_playback(void) {
         return;
     }
     plex_movie_t *m = &g_plex.movies[g_plex.cur_sel];
+    if (m->kind == PLEX_ITEM_SERIES) {
+        return; // series items open an episode list, they don't play
+    }
 
     plex_detail_close();
     if (!plex_sd_has_space()) {
@@ -762,6 +946,11 @@ static void plex_timer_cb(lv_timer_t *timer) {
     int count = 0;
     char section_title[64] = "";
 
+    bool episodes_done = false;
+    int episodes_rc = PLEX_OK;
+    plex_movie_t *episodes = NULL;
+    int episode_count = 0;
+
     bool pin_code_ready = false, pin_linked = false, pin_failed = false;
     char pin_code[12] = "";
 
@@ -795,6 +984,15 @@ static void plex_timer_cb(lv_timer_t *timer) {
         g_work.res_movies = NULL;
         g_work.res_count = 0;
     }
+    if (g_work.episodes_done) {
+        episodes_done = true;
+        g_work.episodes_done = false;
+        episodes_rc = g_work.episodes_rc;
+        episodes = g_work.res_episodes;
+        episode_count = g_work.res_episode_count;
+        g_work.res_episodes = NULL;
+        g_work.res_episode_count = 0;
+    }
     pthread_mutex_unlock(&g_work.lock);
 
     if (discover_done && g_plex.state == PLEX_ST_SETUP) {
@@ -812,10 +1010,17 @@ static void plex_timer_cb(lv_timer_t *timer) {
                 plex_state_error(_lang("The movie library on this server is empty."));
             } else {
                 free(g_plex.movies);
+                if (g_plex.in_series) { // fresh library replaces any parked grid
+                    free(g_plex.lib_movies);
+                    g_plex.lib_movies = NULL;
+                    g_plex.lib_movie_count = 0;
+                    g_plex.in_series = false;
+                }
                 g_plex.movies = movies;
                 g_plex.movie_count = count;
                 g_plex.cur_sel = 0;
                 snprintf(g_plex.section_title, sizeof(g_plex.section_title), "%s", section_title);
+                plex_prefetch_set(g_plex.movies, g_plex.movie_count);
                 plex_state_browse();
             }
             break;
@@ -825,12 +1030,40 @@ static void plex_timer_cb(lv_timer_t *timer) {
             break;
         case PLEX_ERR_NOMOVIE:
             free(movies);
-            plex_state_error(_lang("No movie library was found on this server."));
+            plex_state_error(_lang("No movie or TV library was found on this server."));
             break;
         default:
             free(movies);
             plex_state_error(_lang("Could not reach the Plex server.\nCheck that it is running and on the same network."));
             break;
+        }
+        return;
+    }
+
+    if (episodes_done) {
+        if (episodes_rc == PLEX_OK && episode_count > 0) {
+            if (!g_plex.in_series) {
+                g_plex.lib_movies = g_plex.movies;
+                g_plex.lib_movie_count = g_plex.movie_count;
+                g_plex.lib_cur_sel = g_plex.cur_sel;
+                snprintf(g_plex.lib_section_title, sizeof(g_plex.lib_section_title), "%s", g_plex.section_title);
+            } else {
+                free(g_plex.movies); // series-to-series switch keeps the parked library
+            }
+            g_plex.in_series = true;
+            g_plex.movies = episodes;
+            g_plex.movie_count = episode_count;
+            g_plex.cur_sel = 0;
+            snprintf(g_plex.section_title, sizeof(g_plex.section_title), "%s", g_plex.series_title);
+            plex_prefetch_set(g_plex.movies, g_plex.movie_count);
+            plex_state_browse();
+        } else {
+            free(episodes);
+            if (episodes_rc == PLEX_ERR_AUTH) {
+                plex_state_link();
+            } else {
+                plex_state_error(_lang("Could not load the episodes for this series."));
+            }
         }
         return;
     }
@@ -863,7 +1096,8 @@ static void plex_timer_cb(lv_timer_t *timer) {
         int progress = g_work.progress;
         if (progress > 0) {
             char buf[96];
-            snprintf(buf, sizeof(buf), "%s %d %s...", _lang("Loading library"), progress, _lang("movies"));
+            snprintf(buf, sizeof(buf), "%s %d %s...", _lang("Loading library"), progress,
+                     _lang(g_plex.loading_episodes ? "episodes" : "titles"));
             plex_show_status(buf);
         }
     }
@@ -1035,13 +1269,23 @@ static void plex_key(uint8_t key) {
     }
 
     if (g_plex.detail_open) {
+        plex_movie_t *m = g_plex.movie_count ? &g_plex.movies[g_plex.cur_sel] : NULL;
         if (key == DIAL_KEY_CLICK) {
-            plex_start_playback();
+            if (m && m->kind == PLEX_ITEM_SERIES) {
+                plex_detail_close();
+                plex_state_load_episodes(m);
+            } else {
+                plex_start_playback();
+            }
         } else if (key == DIAL_KEY_UP || key == DIAL_KEY_DOWN) {
-            int dir = (key == DIAL_KEY_UP) ? 1 : PLEX_QUALITY_COUNT - 1;
-            g_setting.plex.quality = (plex_quality() + dir) % PLEX_QUALITY_COUNT;
-            plex_settings_save();
-            plex_detail_open(); // repaint with the new quality
+            if (m && m->kind == PLEX_ITEM_SERIES) {
+                plex_detail_close(); // no quality to cycle on a series
+            } else {
+                int dir = (key == DIAL_KEY_UP) ? 1 : PLEX_QUALITY_COUNT - 1;
+                g_setting.plex.quality = (plex_quality() + dir) % PLEX_QUALITY_COUNT;
+                plex_settings_save();
+                plex_detail_open(); // repaint with the new quality
+            }
         } else if (key == RIGHT_KEY_CLICK) {
             plex_detail_close();
         }
@@ -1225,6 +1469,7 @@ static void page_plex_enter(void) {
 
 static void page_plex_exit(void) {
     plex_invalidate_pending_work();
+    plex_prefetch_set(NULL, 0); // stop background poster downloads
 
     // Safety net: never leave a download or transcode session running
     g_plex.playing = false;
@@ -1277,7 +1522,11 @@ static void page_plex_on_right_button(bool is_short) {
 
     if (g_plex.state == PLEX_ST_BROWSE) {
         if (is_short) {
-            plex_state_loading(); // refresh library
+            if (g_plex.in_series) {
+                plex_series_back();
+            } else {
+                plex_state_loading(); // refresh library
+            }
         } else {
             // Forget server + token (both backends), back to discovery
             g_setting.plex.host[0] = '\0';
@@ -1291,6 +1540,13 @@ static void page_plex_on_right_button(bool is_short) {
             free(g_plex.movies);
             g_plex.movies = NULL;
             g_plex.movie_count = 0;
+            if (g_plex.in_series) {
+                free(g_plex.lib_movies);
+                g_plex.lib_movies = NULL;
+                g_plex.lib_movie_count = 0;
+                g_plex.in_series = false;
+            }
+            plex_prefetch_set(NULL, 0);
             g_plex.rows_server_count = 0;
             plex_state_setup(true);
         }

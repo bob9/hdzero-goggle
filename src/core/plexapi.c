@@ -471,7 +471,7 @@ bool plex_server_reachable(const char *host, int port) {
     return rc == PLEX_OK;
 }
 
-int plex_find_movie_section(char *key, int key_size, char *title, int title_size) {
+int plex_find_section(const char *type, char *key, int key_size, char *title, int title_size) {
     plex_http_resp_t resp;
     int rc = plex_http_get(g_setting.plex.host, g_setting.plex.port, "/library/sections", &resp);
     if (rc != PLEX_OK) {
@@ -482,11 +482,11 @@ int plex_find_movie_section(char *key, int key_size, char *title, int title_size
     rc = PLEX_ERR_NOMOVIE;
     const char *p = resp.body;
     while ((p = xml_next_elem(p, "Directory")) != NULL) {
-        char type[16];
-        if (xml_attr(p, "type", type, sizeof(type)) && strcmp(type, "movie") == 0) {
+        char t[16];
+        if (xml_attr(p, "type", t, sizeof(t)) && strcmp(t, type) == 0) {
             if (xml_attr(p, "key", key, key_size)) {
                 if (!xml_attr(p, "title", title, title_size)) {
-                    snprintf(title, title_size, "Movies");
+                    snprintf(title, title_size, "%s", strcmp(type, "show") == 0 ? "TV Shows" : "Movies");
                 }
                 rc = PLEX_OK;
                 break;
@@ -498,7 +498,9 @@ int plex_find_movie_section(char *key, int key_size, char *title, int title_size
     return rc;
 }
 
-static int plex_parse_movies(const char *xml, plex_movie_t *list, int offset, int max, long *total_out) {
+// Movies and episodes arrive as <Video>, series listings as <Directory>
+static int plex_parse_items(const char *xml, const char *elem, int kind,
+                            plex_movie_t *list, int offset, int max, long *total_out) {
     const char *container = xml_next_elem(xml, "MediaContainer");
     if (container && total_out) {
         *total_out = xml_attr_long(container, "totalSize", -1);
@@ -506,7 +508,7 @@ static int plex_parse_movies(const char *xml, plex_movie_t *list, int offset, in
 
     int added = 0;
     const char *p = xml;
-    while (offset + added < max && (p = xml_next_elem(p, "Video")) != NULL) {
+    while (offset + added < max && (p = xml_next_elem(p, elem)) != NULL) {
         plex_movie_t *m = &list[offset + added];
         memset(m, 0, sizeof(*m));
 
@@ -521,6 +523,9 @@ static int plex_parse_movies(const char *xml, plex_movie_t *list, int offset, in
         m->year = (int)xml_attr_long(p, "year", 0);
         m->duration_min = (int)(xml_attr_long(p, "duration", 0) / 60000);
         m->watched = xml_attr_long(p, "viewCount", 0) > 0;
+        m->kind = kind;
+        m->season = (int16_t)xml_attr_long(p, "parentIndex", 0);
+        m->episode = (int16_t)xml_attr_long(p, "index", 0);
 
         added++;
         p++;
@@ -528,7 +533,8 @@ static int plex_parse_movies(const char *xml, plex_movie_t *list, int offset, in
     return added;
 }
 
-int plex_load_movies(const char *section_key, plex_movie_t **out, int *out_count, volatile int *progress) {
+static int plex_load_list(const char *base_path, const char *elem, int kind,
+                          plex_movie_t **out, int *out_count, volatile int *progress) {
     plex_movie_t *list = malloc(sizeof(plex_movie_t) * PLEX_MOVIES_MAX);
     if (!list) {
         return PLEX_ERR_NET;
@@ -539,9 +545,8 @@ int plex_load_movies(const char *section_key, plex_movie_t **out, int *out_count
     do {
         char path[256];
         snprintf(path, sizeof(path),
-                 "/library/sections/%s/all?type=1&sort=titleSort"
-                 "&X-Plex-Container-Start=%d&X-Plex-Container-Size=%d",
-                 section_key, count, PLEX_CHUNK);
+                 "%s%cX-Plex-Container-Start=%d&X-Plex-Container-Size=%d",
+                 base_path, strchr(base_path, '?') ? '&' : '?', count, PLEX_CHUNK);
 
         plex_http_resp_t resp;
         int rc = plex_http_get(g_setting.plex.host, g_setting.plex.port, path, &resp);
@@ -551,7 +556,7 @@ int plex_load_movies(const char *section_key, plex_movie_t **out, int *out_count
             return rc;
         }
 
-        int added = plex_parse_movies(resp.body, list, count, PLEX_MOVIES_MAX, total < 0 ? &total : NULL);
+        int added = plex_parse_items(resp.body, elem, kind, list, count, PLEX_MOVIES_MAX, total < 0 ? &total : NULL);
         plex_http_free(&resp);
         if (added == 0) {
             break;
@@ -582,6 +587,25 @@ int plex_load_movies(const char *section_key, plex_movie_t **out, int *out_count
     *out = list;
     *out_count = count;
     return PLEX_OK;
+}
+
+int plex_load_movies(const char *section_key, plex_movie_t **out, int *out_count, volatile int *progress) {
+    char base[128];
+    snprintf(base, sizeof(base), "/library/sections/%s/all?type=1&sort=titleSort", section_key);
+    return plex_load_list(base, "Video", PLEX_ITEM_MOVIE, out, out_count, progress);
+}
+
+int plex_load_shows(const char *section_key, plex_movie_t **out, int *out_count, volatile int *progress) {
+    char base[128];
+    snprintf(base, sizeof(base), "/library/sections/%s/all?type=2&sort=titleSort", section_key);
+    return plex_load_list(base, "Directory", PLEX_ITEM_SERIES, out, out_count, progress);
+}
+
+int plex_load_episodes(const char *series_key, plex_movie_t **out, int *out_count, volatile int *progress) {
+    char base[128];
+    // allLeaves walks seasons for us; default order is airing order
+    snprintf(base, sizeof(base), "/library/metadata/%s/allLeaves", series_key);
+    return plex_load_list(base, "Video", PLEX_ITEM_EPISODE, out, out_count, progress);
 }
 
 int plex_server_request(const char *path) {

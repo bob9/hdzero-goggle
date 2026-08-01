@@ -30,6 +30,12 @@ typedef struct {
     int backend; // media_backend_t: which kind of server answered
 } plex_server_t;
 
+typedef enum {
+    PLEX_ITEM_MOVIE = 0, // memset(0) default: plain playable movie
+    PLEX_ITEM_SERIES,    // TV series: opens an episode list instead of playing
+    PLEX_ITEM_EPISODE,   // playable, labeled SxEy
+} plex_item_kind_t;
+
 typedef struct {
     char rating_key[40]; // Plex ratingKey or Jellyfin item id
     char title[96];
@@ -37,6 +43,9 @@ typedef struct {
     int year;       // 0 if unknown
     int duration_min;
     bool watched;
+    uint8_t kind;   // plex_item_kind_t
+    int16_t season; // episodes only, 0 if unknown
+    int16_t episode;
 } plex_movie_t;
 
 /**
@@ -51,10 +60,10 @@ int plex_gdm_discover(plex_server_t *out, int max_out);
 bool plex_server_reachable(const char *host, int port);
 
 /**
- * Find the first movie library section.
+ * Find the first library section of the given type ("movie" or "show").
  * Uses the server and token from g_setting.plex.
  */
-int plex_find_movie_section(char *key, int key_size, char *title, int title_size);
+int plex_find_section(const char *type, char *key, int key_size, char *title, int title_size);
 
 /**
  * Fetch the entire movie listing of a section, sorted by title, into a
@@ -62,6 +71,12 @@ int plex_find_movie_section(char *key, int key_size, char *title, int title_size
  * number of movies fetched so far while the transfer is running.
  */
 int plex_load_movies(const char *section_key, plex_movie_t **out, int *out_count, volatile int *progress);
+
+/** TV series listing of a show section (kind = PLEX_ITEM_SERIES). */
+int plex_load_shows(const char *section_key, plex_movie_t **out, int *out_count, volatile int *progress);
+
+/** Every episode of one series in airing order (kind = PLEX_ITEM_EPISODE). */
+int plex_load_episodes(const char *series_key, plex_movie_t **out, int *out_count, volatile int *progress);
 
 /**
  * Ensure the poster for a movie is present in the local cache, downloading a
