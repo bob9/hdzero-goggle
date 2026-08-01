@@ -612,9 +612,14 @@ void jf_stream_path(char *buf, int size, const plex_movie_t *movie, int offset_s
     // wedges the goggle's hardware decoder solid. A forced transcode
     // yields normalized progressive H.264 the player is known to handle.
     // The bitrate implies the resolution tier (1080p/720p/480p).
+    // Constrain the output to the exact shape the goggle's player is
+    // proven with (matching the Plex transcode profile): stereo AAC -
+    // 5.1 output would be new territory for the audio decoder - <=30 fps,
+    // and H.264 high@4.0.
     snprintf(buf, size,
              "/Videos/%s/stream.ts?VideoCodec=h264&AudioCodec=aac"
              "&VideoBitrate=%d000&AudioBitrate=192000&MaxWidth=%d"
+             "&MaxAudioChannels=2&MaxFramerate=30&Profile=high&Level=40"
              "&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false"
              "&SubtitleMethod=None&StartTimeTicks=%lld&DeviceId=%s"
              "&PlaySessionId=%s&api_key=%s",

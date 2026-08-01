@@ -944,9 +944,11 @@ static bool plex_stream_step_down(const char *reason) {
 static void plex_launch_player(void) {
     plex_movie_t *m = &g_plex.movies[g_plex.cur_sel];
     // Last breadcrumb before handing the file to the hardware decoder: if
-    // the goggle wedges here, hwlog shows what it was trying to play
+    // the goggle wedges here, hwlog shows what it was trying to play.
+    // sync() pushes the log to the SD card so it survives a hard freeze.
     LOGI("plex: launching player for %s (%ld bytes buffered, tier %d)",
          m->rating_key, plexstream_bytes(), g_plex.stream_tier);
+    sync();
     g_plex.playing = true;
     app_state_push(APP_STATE_PLAYBACK);
     mplayer_file(PLEXSTREAM_FILE);
