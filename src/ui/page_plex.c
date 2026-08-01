@@ -78,6 +78,10 @@ static int plex_quality(void) {
     int q = g_setting.plex.quality;
     return (q < 0 || q >= PLEX_QUALITY_COUNT) ? 0 : q;
 }
+
+// Below this sustained download rate no tier is watchable; the server's
+// transcoder (or the WiFi link) is not keeping up
+#define PLEX_MIN_STREAM_BPS (300 * 1024)
 #define PLEX_BUFFER_START      (8 * 1024 * 1024) // head start before the player opens the file
 #define PLEX_MIN_FREE_SD_BYTES (2LL * 1024 * 1024 * 1024)
 
@@ -175,11 +179,12 @@ typedef struct {
     int lib_cur_sel;
     char lib_section_title[64];
 
-    // Buffering: download rate sampling + one lower-quality retry
-    bool stream_retried;
+    // Buffering: download rate sampling + automatic quality step-down
+    int stream_tier; // quality tier in use; starts at the setting, steps down on trouble
     long buf_last_bytes;
     uint32_t buf_last_ms;
-    long buf_rate; // bytes/sec over the last sample window
+    long buf_rate;        // bytes/sec over the last sample window
+    uint32_t buf_slow_ms; // time spent below the playable-rate floor
 
     // Widgets
     lv_obj_t *header;
@@ -900,14 +905,15 @@ static void plex_start_playback(void) {
         plex_show_status(_lang("Playback needs an SD card with at least 2 GB free.\nStreaming buffers the movie onto the card while it plays."));
         return;
     }
-    if (!plexstream_begin(m, 0, plex_quality_kbps[plex_quality()])) {
+    g_plex.stream_tier = plex_quality();
+    if (!plexstream_begin(m, 0, plex_quality_kbps[g_plex.stream_tier])) {
         plex_show_status(_lang("Could not start the stream."));
         return;
     }
-    g_plex.stream_retried = false;
     g_plex.buf_last_bytes = 0;
     g_plex.buf_last_ms = lv_tick_get();
     g_plex.buf_rate = -1;
+    g_plex.buf_slow_ms = 0;
 
     plex_enter_state_common();
     g_plex.state = PLEX_ST_BUFFERING;
@@ -916,6 +922,23 @@ static void plex_start_playback(void) {
     plex_set_header(buf);
     plex_show_status(_lang("Asking the server for the stream..."));
     plex_set_hint(_lang("Click to cancel"));
+}
+
+// Restart the buffering stream one quality tier lower (the caller has
+// already stopped the old one). Returns false if the restart failed.
+static bool plex_stream_step_down(const char *reason) {
+    g_plex.stream_tier++;
+    if (!plexstream_begin(&g_plex.movies[g_plex.cur_sel], 0, plex_quality_kbps[g_plex.stream_tier])) {
+        return false;
+    }
+    g_plex.buf_last_bytes = 0;
+    g_plex.buf_last_ms = lv_tick_get();
+    g_plex.buf_rate = -1;
+    g_plex.buf_slow_ms = 0;
+    char buf[192];
+    snprintf(buf, sizeof(buf), "%s\n%s %s...", reason, _lang("Retrying at"), plex_quality_name[g_plex.stream_tier]);
+    plex_show_status(buf);
+    return true;
 }
 
 static void plex_launch_player(void) {
@@ -1110,18 +1133,11 @@ static void plex_timer_cb(lv_timer_t *timer) {
         }
         if (plexstream_failed()) {
             plexstream_stop();
-            // One retry a quality tier down: a server whose transcoder can't
+            // Step a quality tier down: a server whose transcoder can't
             // keep up (or crashed) often manages the lighter encode.
-            int q = plex_quality();
-            if (!g_plex.stream_retried && g_plex.movie_count && q < PLEX_QUALITY_COUNT - 1) {
-                g_plex.stream_retried = true;
-                if (plexstream_begin(&g_plex.movies[g_plex.cur_sel], 0, plex_quality_kbps[q + 1])) {
-                    g_plex.buf_last_bytes = 0;
-                    g_plex.buf_last_ms = lv_tick_get();
-                    g_plex.buf_rate = -1;
-                    plex_show_status(_lang("The server is struggling with this movie.\nRetrying at a lower quality..."));
-                    return;
-                }
+            if (g_plex.movie_count && g_plex.stream_tier < PLEX_QUALITY_COUNT - 1 &&
+                plex_stream_step_down(_lang("The server is struggling with this title."))) {
+                return;
             }
             plex_state_error(_lang("The server could not stream this movie.\nCheck that the server can transcode it (a 4K/HEVC movie\nneeds hardware transcoding enabled on the server)."));
             return;
@@ -1136,17 +1152,29 @@ static void plex_timer_cb(lv_timer_t *timer) {
         // visible instead of a silently frozen byte count
         uint32_t now = lv_tick_get();
         if (now - g_plex.buf_last_ms >= 2000) {
-            g_plex.buf_rate = (bytes - g_plex.buf_last_bytes) * 1000 / (long)(now - g_plex.buf_last_ms);
+            long dt = (long)(now - g_plex.buf_last_ms);
+            g_plex.buf_rate = (bytes - g_plex.buf_last_bytes) * 1000 / dt;
             g_plex.buf_last_bytes = bytes;
             g_plex.buf_last_ms = now;
+            g_plex.buf_slow_ms = (g_plex.buf_rate < PLEX_MIN_STREAM_BPS) ? g_plex.buf_slow_ms + dt : 0;
+
+            // A server stuck below a watchable rate won't improve by
+            // waiting: drop a tier instead of buffering forever
+            if (g_plex.buf_slow_ms >= 20000 && g_plex.movie_count &&
+                g_plex.stream_tier < PLEX_QUALITY_COUNT - 1) {
+                plexstream_stop();
+                if (plex_stream_step_down(_lang("The server is converting too slowly."))) {
+                    return;
+                }
+            }
         }
-        char buf[128];
+        char buf[160];
         if (g_plex.buf_rate < 0) {
             snprintf(buf, sizeof(buf), "%s %ld MB...", _lang("Buffering"), bytes / (1024 * 1024));
-        } else if (g_plex.buf_rate < 32 * 1024) {
+        } else if (g_plex.buf_rate < PLEX_MIN_STREAM_BPS) {
             snprintf(buf, sizeof(buf), "%s %ld MB (%ld KB/s)\n%s", _lang("Buffering"),
                      bytes / (1024 * 1024), g_plex.buf_rate / 1024,
-                     _lang("The server is converting this movie very slowly."));
+                     _lang("The server is converting slower than the video plays.\nHardware transcoding on the server fixes this."));
         } else {
             snprintf(buf, sizeof(buf), "%s %ld MB (%.1f MB/s)...", _lang("Buffering"),
                      bytes / (1024 * 1024), (double)g_plex.buf_rate / (1024 * 1024));
