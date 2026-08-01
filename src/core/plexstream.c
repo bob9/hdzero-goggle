@@ -12,6 +12,7 @@
 
 #include "core/jellyfinapi.h"
 #include "core/settings.h"
+#include "util/hwlog.h"
 
 typedef struct {
     plex_stream_state_t io;
@@ -36,6 +37,10 @@ static void *plexstream_thread(void *arg) {
     } else {
         plex_stream_download(g_stream.path, PLEXSTREAM_FILE, &g_stream.io);
     }
+    // Fsync'd to SD: if playback later runs out of file, this line says
+    // when and why the feed stopped (result 0 + no cancel = server closed)
+    hwlog("plex: stream ended bytes=%ld result=%d%s",
+          g_stream.io.bytes, g_stream.io.result, g_stream.io.cancel ? " (cancelled)" : "");
     return NULL;
 }
 

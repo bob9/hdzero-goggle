@@ -1539,7 +1539,10 @@ static void page_plex_on_click(uint8_t key, int sel) {
 
 static void page_plex_on_right_button(bool is_short) {
     if (g_plex.playing) {
-        if (mplayer_on_key(is_short ? RIGHT_KEY_CLICK : RIGHT_KEY_PRESS)) {
+        // Func long-press = exit playback (the stock RIGHT_KEY handlers in
+        // the player are display-bench dev leftovers - never forward them)
+        if (!is_short) {
+            mplayer_on_key(DIAL_KEY_PRESS); // stock exit path
             plex_end_playback();
         }
         return;

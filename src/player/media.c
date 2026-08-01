@@ -165,6 +165,7 @@ void *thread_media(void *params) {
     int stall_ticks = 0;
     int fps_ticks = 0;
     int fps_last_frames = -1;
+    int beat_last_ms = 0;
     for (;;) {
         if (!media)
             break;
@@ -205,6 +206,12 @@ void *thread_media(void *params) {
                 playCtx->fps = frames - fps_last_frames;
             fps_last_frames = frames;
             fps_ticks = 0;
+        }
+        // Heartbeat to the SD card: bounds when playback stopped if a
+        // session ends unexpectedly (fsync'd, survives anything)
+        if (playCtx->playingTime - beat_last_ms >= 30000) {
+            beat_last_ms = playCtx->playingTime;
+            hwlog("media: t=%ds fps=%d", playCtx->playingTime / 1000, playCtx->fps);
         }
         pthread_mutex_unlock(&playCtx->mutex);
 

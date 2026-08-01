@@ -420,8 +420,10 @@ int lanhttp_download(const char *host, int port, const char *path,
             break;
         } else {
             if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
-                if (++quiet_reads >= 12) {
-                    LOGE("lanhttp: stream stalled for 60s, giving up");
+                // Generous: a server pacing its transcode to real time can
+                // legitimately pause the stream for minutes at a stretch
+                if (++quiet_reads >= 60) {
+                    LOGE("lanhttp: stream stalled for 5min, giving up");
                     rc = LANHTTP_ERR_NET;
                     break;
                 }
