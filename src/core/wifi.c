@@ -1,5 +1,9 @@
 #include "wifi.h"
 
+#include <linux/genetlink.h>
+#include <linux/netlink.h>
+#include <linux/nl80211.h>
+#include <net/if.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -265,13 +269,118 @@ int wifi_scan_results(wifi_scan_entry_t *entries, int max) {
     return count;
 }
 
+/**
+ * Disable 802.11 power save on wlan0 via a raw nl80211 request (there is no
+ * `iw` on the device). The XR819's power-save adds hundreds of ms of latency
+ * per TCP round trip, which caps throughput at a few hundred KB/s - fatal
+ * for movie streaming. Returns 0 on success.
+ */
+static int nla_put(char *buf, int offset, int type, const void *data, int len) {
+    struct nlattr *na = (struct nlattr *)(buf + offset);
+    na->nla_type = type;
+    na->nla_len = NLA_HDRLEN + len;
+    memcpy(buf + offset + NLA_HDRLEN, data, len);
+    return offset + NLA_ALIGN(na->nla_len);
+}
+
+static int wifi_disable_power_save(void) {
+    int ifindex = if_nametoindex("wlan0");
+    if (ifindex == 0) {
+        return -1;
+    }
+
+    int fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_GENERIC);
+    if (fd < 0) {
+        return -1;
+    }
+    struct timeval tv = {.tv_sec = 1};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    // Resolve the nl80211 generic-netlink family id
+    char buf[512];
+    memset(buf, 0, sizeof(buf));
+    struct nlmsghdr *nlh = (struct nlmsghdr *)buf;
+    struct genlmsghdr *ge = (struct genlmsghdr *)(buf + NLMSG_HDRLEN);
+    nlh->nlmsg_type = GENL_ID_CTRL;
+    nlh->nlmsg_flags = NLM_F_REQUEST;
+    nlh->nlmsg_seq = 1;
+    ge->cmd = CTRL_CMD_GETFAMILY;
+    ge->version = 1;
+    int off = nla_put(buf, NLMSG_HDRLEN + GENL_HDRLEN, CTRL_ATTR_FAMILY_NAME,
+                      "nl80211", sizeof("nl80211"));
+    nlh->nlmsg_len = off;
+    if (send(fd, buf, nlh->nlmsg_len, 0) < 0) {
+        close(fd);
+        return -1;
+    }
+
+    int n = recv(fd, buf, sizeof(buf), 0);
+    if (n < NLMSG_HDRLEN || nlh->nlmsg_type == NLMSG_ERROR) {
+        close(fd);
+        return -1;
+    }
+    uint16_t family_id = 0;
+    int a = NLMSG_HDRLEN + GENL_HDRLEN;
+    while (a + NLA_HDRLEN <= n) {
+        struct nlattr *na = (struct nlattr *)(buf + a);
+        if (na->nla_len < NLA_HDRLEN) {
+            break;
+        }
+        if (na->nla_type == CTRL_ATTR_FAMILY_ID) {
+            family_id = *(uint16_t *)(buf + a + NLA_HDRLEN);
+            break;
+        }
+        a += NLA_ALIGN(na->nla_len);
+    }
+    if (!family_id) {
+        close(fd);
+        return -1;
+    }
+
+    // NL80211_CMD_SET_POWER_SAVE { IFINDEX, PS_STATE = DISABLED }
+    memset(buf, 0, sizeof(buf));
+    nlh->nlmsg_type = family_id;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+    nlh->nlmsg_seq = 2;
+    ge->cmd = NL80211_CMD_SET_POWER_SAVE;
+    ge->version = 0;
+    uint32_t u32 = (uint32_t)ifindex;
+    off = nla_put(buf, NLMSG_HDRLEN + GENL_HDRLEN, NL80211_ATTR_IFINDEX, &u32, sizeof(u32));
+    u32 = NL80211_PS_DISABLED;
+    off = nla_put(buf, off, NL80211_ATTR_PS_STATE, &u32, sizeof(u32));
+    nlh->nlmsg_len = off;
+    if (send(fd, buf, nlh->nlmsg_len, 0) < 0) {
+        close(fd);
+        return -1;
+    }
+
+    int err = -1;
+    n = recv(fd, buf, sizeof(buf), 0);
+    if (n >= (int)(NLMSG_HDRLEN + sizeof(struct nlmsgerr)) && nlh->nlmsg_type == NLMSG_ERROR) {
+        err = ((struct nlmsgerr *)(buf + NLMSG_HDRLEN))->error; // 0 = ACK
+    }
+    close(fd);
+    return err;
+}
+
 bool wifi_connected_ssid(char *buffer, int size) {
     static char reply[1024];
+    static bool ps_off_done = false;
     if (wpa_request("STATUS", reply, sizeof(reply)) <= 0) {
+        ps_off_done = false;
         return false;
     }
 
     bool completed = strstr(reply, "wpa_state=COMPLETED") != NULL;
+
+    // Kill power save once per association; retried until it sticks
+    if (completed && !ps_off_done) {
+        int rc = wifi_disable_power_save();
+        LOGI("wifi: power save disable rc=%d", rc);
+        ps_off_done = rc == 0;
+    } else if (!completed) {
+        ps_off_done = false;
+    }
     char *ssid = strstr(reply, "\nssid=");
     if (!completed || !ssid) {
         return false;

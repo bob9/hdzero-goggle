@@ -192,6 +192,10 @@ static void page_wifi_update_services() {
         fprintf(fp, "insmod /mnt/app/ko/xradio_core.ko\n");
         fprintf(fp, "insmod /mnt/app/ko/xradio_wlan.ko\n");
         fprintf(fp, "ifconfig wlan0 %s netmask %s up\n", g_setting.wifi.ip_addr, g_setting.wifi.netmask);
+        fprintf(fp, "echo 1048576 > /proc/sys/net/core/rmem_max\n");
+        fprintf(fp, "echo 1048576 > /proc/sys/net/core/wmem_max\n");
+        fprintf(fp, "echo '4096 262144 1048576' > /proc/sys/net/ipv4/tcp_rmem\n");
+        fprintf(fp, "echo '4096 131072 1048576' > /proc/sys/net/ipv4/tcp_wmem\n");
         fprintf(fp, "hostapd /tmp/hostapd.conf&\n");
         fprintf(fp, "udhcpd /tmp/udhcpd.conf&\n");
         fprintf(fp, "route add default gw %s\n", g_setting.wifi.gateway);
@@ -206,6 +210,12 @@ static void page_wifi_update_services() {
         fprintf(fp, "insmod /mnt/app/ko/xradio_core.ko\n");
         fprintf(fp, "insmod /mnt/app/ko/xradio_wlan.ko\n");
         fprintf(fp, "ifconfig wlan0 up\n");
+        // Default TCP windows on this kernel are too small for a
+        // high-latency WiFi link; streaming needs the headroom
+        fprintf(fp, "echo 1048576 > /proc/sys/net/core/rmem_max\n");
+        fprintf(fp, "echo 1048576 > /proc/sys/net/core/wmem_max\n");
+        fprintf(fp, "echo '4096 262144 1048576' > /proc/sys/net/ipv4/tcp_rmem\n");
+        fprintf(fp, "echo '4096 131072 1048576' > /proc/sys/net/ipv4/tcp_wmem\n");
 
         if (g_setting.wifi.dhcp) {
             fprintf(fp,

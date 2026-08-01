@@ -37,6 +37,11 @@ static int lanhttp_connect(const char *host, int port) {
         return -1;
     }
 
+    // Large receive window before connect(): the WiFi link's latency times
+    // the kernel's small default window otherwise caps download throughput
+    int rcvbuf = 512 * 1024;
+    setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
     int rc = connect(fd, res->ai_addr, res->ai_addrlen);
     freeaddrinfo(res);
