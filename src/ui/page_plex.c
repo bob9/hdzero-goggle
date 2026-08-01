@@ -969,6 +969,14 @@ static void plex_end_playback(void) {
 static void plex_timer_cb(lv_timer_t *timer) {
     (void)timer;
 
+    // The player owns the page while a movie runs. Without this guard the
+    // BUFFERING branch below kept re-launching the player every tick on
+    // top of the live decode - double media_init wedged the whole device
+    // (seen in field hwlogs as three launches in 1.5 s, then a freeze).
+    if (g_plex.playing) {
+        return;
+    }
+
     bool discover_done = false, connect_done = false;
     int connect_rc = PLEX_OK;
     plex_movie_t *movies = NULL;
