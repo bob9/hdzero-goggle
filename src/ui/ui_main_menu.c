@@ -53,7 +53,7 @@ static lv_obj_t *root_page;
  * To contain all menu pages.
  */
 
-#define PAGE_PACK_MAX_NUM 20
+#define PAGE_PACK_MAX_NUM 25
 
 static page_pack_t *page_packs[PAGE_PACK_MAX_NUM];
 static size_t page_packs_count = 0;
