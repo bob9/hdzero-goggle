@@ -67,8 +67,16 @@ typedef enum {
     PLEX_ST_ERROR,
 } plex_ui_state_t;
 
-#define PLEX_STREAM_KBPS       12000
-#define PLEX_STREAM_KBPS_LOW   4000 // retry quality: 720p-class encode a weak server can manage
+// Server-side transcode caps, indexed by stream_quality_t (g_setting.plex.quality).
+// The bitrate implies the resolution tier in both backends' stream URLs.
+static const int plex_quality_kbps[] = {12000, 6000, 2500};
+static const char *plex_quality_name[] = {"1080p", "720p", "480p"};
+#define PLEX_QUALITY_COUNT 3
+
+static int plex_quality(void) {
+    int q = g_setting.plex.quality;
+    return (q < 0 || q >= PLEX_QUALITY_COUNT) ? 0 : q;
+}
 #define PLEX_BUFFER_START      (8 * 1024 * 1024) // head start before the player opens the file
 #define PLEX_MIN_FREE_SD_BYTES (2LL * 1024 * 1024 * 1024)
 
@@ -674,10 +682,11 @@ static void plex_detail_open(void) {
     } else {
         snprintf(title, sizeof(title), "%s", m->title);
     }
-    snprintf(text, sizeof(text), "%s: %dh %02dm\n%s\n\n%s",
+    snprintf(text, sizeof(text), "%s: %dh %02dm\n%s\n%s: %s\n\n%s",
              _lang("Duration"), m->duration_min / 60, m->duration_min % 60,
              m->watched ? _lang("Watched") : _lang("Unwatched"),
-             _lang("Click the dial to play.\nFunc button or scroll to go back."));
+             _lang("Quality"), plex_quality_name[plex_quality()],
+             _lang("Click the dial to play. Scroll to change quality.\nFunc button to go back."));
     lv_label_set_text(lv_msgbox_get_title(g_plex.detail), title);
     lv_label_set_text(lv_msgbox_get_text(g_plex.detail), text);
     lv_obj_clear_flag(g_plex.detail, LV_OBJ_FLAG_HIDDEN);
@@ -707,7 +716,7 @@ static void plex_start_playback(void) {
         plex_show_status(_lang("Playback needs an SD card with at least 2 GB free.\nStreaming buffers the movie onto the card while it plays."));
         return;
     }
-    if (!plexstream_begin(m, 0, PLEX_STREAM_KBPS)) {
+    if (!plexstream_begin(m, 0, plex_quality_kbps[plex_quality()])) {
         plex_show_status(_lang("Could not start the stream."));
         return;
     }
@@ -867,11 +876,12 @@ static void plex_timer_cb(lv_timer_t *timer) {
         }
         if (plexstream_failed()) {
             plexstream_stop();
-            // One retry at 720p/4 Mbps: a server whose transcoder can't keep
-            // up (or crashed) at 1080p often manages the lighter encode.
-            if (!g_plex.stream_retried && g_plex.movie_count) {
+            // One retry a quality tier down: a server whose transcoder can't
+            // keep up (or crashed) often manages the lighter encode.
+            int q = plex_quality();
+            if (!g_plex.stream_retried && g_plex.movie_count && q < PLEX_QUALITY_COUNT - 1) {
                 g_plex.stream_retried = true;
-                if (plexstream_begin(&g_plex.movies[g_plex.cur_sel], 0, PLEX_STREAM_KBPS_LOW)) {
+                if (plexstream_begin(&g_plex.movies[g_plex.cur_sel], 0, plex_quality_kbps[q + 1])) {
                     g_plex.buf_last_bytes = 0;
                     g_plex.buf_last_ms = lv_tick_get();
                     g_plex.buf_rate = -1;
@@ -1027,7 +1037,12 @@ static void plex_key(uint8_t key) {
     if (g_plex.detail_open) {
         if (key == DIAL_KEY_CLICK) {
             plex_start_playback();
-        } else if (key == RIGHT_KEY_CLICK || key == DIAL_KEY_UP || key == DIAL_KEY_DOWN) {
+        } else if (key == DIAL_KEY_UP || key == DIAL_KEY_DOWN) {
+            int dir = (key == DIAL_KEY_UP) ? 1 : PLEX_QUALITY_COUNT - 1;
+            g_setting.plex.quality = (plex_quality() + dir) % PLEX_QUALITY_COUNT;
+            plex_settings_save();
+            plex_detail_open(); // repaint with the new quality
+        } else if (key == RIGHT_KEY_CLICK) {
             plex_detail_close();
         }
         return;

@@ -392,12 +392,19 @@ typedef enum {
     MEDIA_BACKEND_JELLYFIN = 1,
 } media_backend_t;
 
+typedef enum {
+    STREAM_QUALITY_1080P = 0,
+    STREAM_QUALITY_720P = 1,
+    STREAM_QUALITY_480P = 2,
+} stream_quality_t;
+
 typedef struct {
     char host[PLEX_HOST_MAX];
     int port;
     char token[PLEX_TOKEN_MAX];
     char client_id[PLEX_CLIENTID_MAX];
     int backend; // media_backend_t: which server type the saved host is
+    int quality; // stream_quality_t: cap for the server-side transcode, both backends
 } setting_plex_t;
 
 typedef struct {

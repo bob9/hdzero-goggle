@@ -90,10 +90,12 @@ bool plexstream_begin(const plex_movie_t *movie, int offset_s, int max_kbps) {
                  "&mediaIndex=0&partIndex=0"
                  "&protocol=http&container=mpegts"
                  "&videoCodec=h264&audioCodec=aac&audioBoost=100"
-                 "&maxVideoBitrate=%d&videoQuality=100&videoResolution=1920x1080"
+                 "&maxVideoBitrate=%d&videoQuality=100&videoResolution=%s"
                  "&directPlay=0&directStream=1&subtitles=none&fastSeek=1"
                  "&offset=%d&session=%s",
-                 movie->rating_key, max_kbps, offset_s, g_stream.session);
+                 movie->rating_key, max_kbps,
+                 max_kbps >= 8000 ? "1920x1080" : (max_kbps >= 4000 ? "1280x720" : "854x480"),
+                 offset_s, g_stream.session);
     }
 
     memset(&g_stream.io, 0, sizeof(g_stream.io));

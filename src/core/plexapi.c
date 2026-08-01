@@ -58,6 +58,8 @@ void plex_settings_save(void) {
     ini_putl("plex", "port", g_setting.plex.port, SETTING_INI);
     ini_puts("plex", "token", g_setting.plex.token, SETTING_INI);
     ini_puts("plex", "client_id", g_setting.plex.client_id, SETTING_INI);
+    ini_putl("plex", "backend", g_setting.plex.backend, SETTING_INI);
+    ini_putl("plex", "quality", g_setting.plex.quality, SETTING_INI);
 }
 
 #define PLEX_TOKEN_FILE "/mnt/extsd/plextoken.txt"

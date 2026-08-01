@@ -588,15 +588,16 @@ void jf_stream_path(char *buf, int size, const plex_movie_t *movie, int offset_s
     // Continuous transcoded/remuxed TS over one HTTP response; the token
     // travels as api_key since the download path sends no custom headers.
     // Stream copy is allowed so already-compatible H.264 sources remux
-    // instead of transcoding; the retry path drops to 720p to lighten the
-    // encode on servers that can't keep up at 1080p.
+    // instead of transcoding. The bitrate implies the resolution tier
+    // (1080p/720p/480p) so a lighter cap also lightens the encode.
     snprintf(buf, size,
              "/Videos/%s/stream.ts?VideoCodec=h264&AudioCodec=aac"
              "&VideoBitrate=%d000&AudioBitrate=192000&MaxWidth=%d"
              "&AllowVideoStreamCopy=true&AllowAudioStreamCopy=true"
              "&SubtitleMethod=None&StartTimeTicks=%lld&DeviceId=%s"
              "&PlaySessionId=%s&api_key=%s",
-             movie->rating_key, max_kbps, max_kbps <= 6000 ? 1280 : 1920,
+             movie->rating_key, max_kbps,
+             max_kbps >= 8000 ? 1920 : (max_kbps >= 4000 ? 1280 : 854),
              (long long)offset_s * 10000000LL,
              jf_device_id(), play_session, g_setting.jellyfin.token);
 }
