@@ -26,6 +26,7 @@
 #include "ui/ui_keyboard.h"
 #include "ui/ui_player.h"
 #include "ui/ui_style.h"
+#include "util/hwlog.h"
 
 extern media_t *media; // ui_player's active playback handle
 
@@ -943,12 +944,11 @@ static bool plex_stream_step_down(const char *reason) {
 
 static void plex_launch_player(void) {
     plex_movie_t *m = &g_plex.movies[g_plex.cur_sel];
-    // Last breadcrumb before handing the file to the hardware decoder: if
-    // the goggle wedges here, hwlog shows what it was trying to play.
-    // sync() pushes the log to the SD card so it survives a hard freeze.
-    LOGI("plex: launching player for %s (%ld bytes buffered, tier %d)",
-         m->rating_key, plexstream_bytes(), g_plex.stream_tier);
-    sync();
+    // Breadcrumb straight to the SD card (hwlog fsyncs each line): the
+    // app's normal log does not survive the hard freezes seen in the
+    // field, so mark what the player is about to swallow
+    hwlog("plex: launch item=%s bytes=%ld tier=%d",
+          m->rating_key, plexstream_bytes(), g_plex.stream_tier);
     g_plex.playing = true;
     app_state_push(APP_STATE_PLAYBACK);
     mplayer_file(PLEXSTREAM_FILE);

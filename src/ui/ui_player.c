@@ -13,6 +13,7 @@
 #include "record/record_definitions.h"
 #include "ui/ui_porting.h"
 #include "ui/ui_style.h"
+#include "util/hwlog.h"
 
 #if defined(HDZGOGGLE)
 static bool lvgl_at_720p = false;
@@ -457,9 +458,14 @@ void media_seek(uint32_t seekto) {
 // interface func
 void mplayer_file(char *fname) {
     LOGI("mplayer %s", fname);
+    // Stage breadcrumbs to the SD card: a hard freeze in here takes the
+    // whole device, and hwlog's fsync'd lines are the only evidence left
+    hwlog("mplayer: open %s", fname);
     load_stars(fname);
+    hwlog("mplayer: stars loaded");
     init_mplayer();
     media_init(fname);
+    hwlog("mplayer: media_init done");
     int const retimed = media_retimed_hz(media);
     if (retimed == 90) {
 #if defined(HDZGOGGLE)
@@ -477,6 +483,7 @@ void mplayer_file(char *fname) {
         lv_obj_set_pos(controller.bar, (1280 - UI_MPLAYER_CB_WIDTH) >> 1, 720 - 160);
     }
     media_start();
+    hwlog("mplayer: media started");
     update_mplayer();
     bar_hide_timer = lv_timer_create(bar_hide_cb, BAR_HIDE_MS, NULL);
 }
