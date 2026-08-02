@@ -1,5 +1,6 @@
 #include "plexstream.h"
 
+#include <fcntl.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,18 +21,49 @@ typedef struct {
     pthread_t reporter;
     bool reporter_active;
     bool active;
+    bool preparing; // allocating the stream file; no bytes flow yet
     int backend;
     int offset_s;
     time_t started_at;
     char item_id[64];
     char path[768];
-    char session[24];
+    char session[48];    // server-issued PlaySessionId is a 32-char GUID
+    long long runtime_ms; // exact runtime from the server, 0 if unknown
 } plexstream_t;
 
 static plexstream_t g_stream;
 
+// Make sure the stream file is already at its full size before any of it is
+// downloaded, so the demuxer never sees a short file. Costs a one-off ~20s
+// on a fresh card (FAT32 writes the blocks for real); every later stream
+// finds the file already there and returns immediately.
+static void plexstream_ensure_prealloc(void) {
+    struct stat st;
+    if (stat(PLEXSTREAM_FILE, &st) == 0 && st.st_size >= PLEXSTREAM_PREALLOC_BYTES) {
+        return;
+    }
+
+    int fd = open(PLEXSTREAM_FILE, O_WRONLY | O_CREAT, 0644);
+    if (fd < 0) {
+        LOGE("plexstream: cannot create %s", PLEXSTREAM_FILE);
+        return;
+    }
+    time_t const t0 = time(NULL);
+    if (ftruncate(fd, (off_t)PLEXSTREAM_PREALLOC_BYTES) != 0) {
+        LOGE("plexstream: preallocate failed");
+        close(fd);
+        unlink(PLEXSTREAM_FILE); // a partial file would be worse than none
+        return;
+    }
+    close(fd);
+    hwlog("plex: preallocated %lldMB in %lds", PLEXSTREAM_PREALLOC_BYTES / (1024 * 1024),
+          (long)(time(NULL) - t0));
+}
+
 static void *plexstream_thread(void *arg) {
     (void)arg;
+    plexstream_ensure_prealloc();
+    g_stream.preparing = false;
     if (g_stream.backend == MEDIA_BACKEND_JELLYFIN) {
         jf_stream_download(g_stream.path, PLEXSTREAM_FILE, &g_stream.io);
     } else {
@@ -74,16 +106,26 @@ bool plexstream_begin(const plex_movie_t *movie, int offset_s, int max_kbps) {
         plexstream_stop();
     }
 
+    // The stream file is deliberately not deleted between movies: it is
+    // preallocated once and overwritten from the front each time, which is
+    // what keeps the demuxer from seeing a short file (see plexstream.h).
     mkdir("/mnt/extsd/plexcache", 0755);
-    unlink(PLEXSTREAM_FILE);
 
     g_stream.backend = g_setting.plex.backend;
     g_stream.offset_s = offset_s;
     g_stream.started_at = time(NULL);
     snprintf(g_stream.item_id, sizeof(g_stream.item_id), "%s", movie->rating_key);
     snprintf(g_stream.session, sizeof(g_stream.session), "hdzg%08x", (unsigned)time(NULL));
+    g_stream.runtime_ms = 0;
 
     if (g_stream.backend == MEDIA_BACKEND_JELLYFIN) {
+        // Prefer the server's own session id and runtime; the locally
+        // generated id above stands in if the call fails, which only costs
+        // the throttle-avoidance reports and leaves playback working.
+        if (jf_playback_info(g_stream.item_id, max_kbps, g_stream.session,
+                             sizeof(g_stream.session), &g_stream.runtime_ms) != PLEX_OK) {
+            LOGE("plexstream: PlaybackInfo failed, using a local session id");
+        }
         jf_stream_path(g_stream.path, sizeof(g_stream.path), movie, offset_s, max_kbps, g_stream.session);
     } else {
         // Universal transcode to a single continuous MPEG-TS HTTP stream.
@@ -104,6 +146,7 @@ bool plexstream_begin(const plex_movie_t *movie, int offset_s, int max_kbps) {
     }
 
     memset(&g_stream.io, 0, sizeof(g_stream.io));
+    g_stream.preparing = true;
     if (pthread_create(&g_stream.thread, NULL, plexstream_thread, NULL) != 0) {
         LOGE("plexstream: thread create failed");
         return false;
@@ -119,6 +162,14 @@ bool plexstream_begin(const plex_movie_t *movie, int offset_s, int max_kbps) {
 
 long plexstream_bytes(void) {
     return g_stream.io.bytes;
+}
+
+bool plexstream_preparing(void) {
+    return g_stream.active && g_stream.preparing;
+}
+
+long long plexstream_runtime_ms(void) {
+    return g_stream.runtime_ms;
 }
 
 bool plexstream_failed(void) {
@@ -154,6 +205,5 @@ void plexstream_stop(void) {
         plex_server_request(path);
     }
 
-    unlink(PLEXSTREAM_FILE);
     LOGI("plexstream: session %s stopped", g_stream.session);
 }

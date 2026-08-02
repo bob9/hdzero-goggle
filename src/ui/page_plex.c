@@ -83,8 +83,17 @@ static int plex_quality(void) {
 // Below this sustained download rate no tier is watchable; the server's
 // transcoder (or the WiFi link) is not keeping up
 #define PLEX_MIN_STREAM_BPS (300 * 1024)
-#define PLEX_BUFFER_START      (8 * 1024 * 1024) // head start before the player opens the file
+// Measured: the demuxer's first premature EOF lands at ~4.5s of playback
+// whether 8MB or 50MB is buffered ahead of it, so a bigger head start buys
+// nothing there and only delays the start. This threshold exists for slow
+// servers, not for that.
+#define PLEX_BUFFER_START      (8 * 1024 * 1024)  // head start when the server keeps up
+#define PLEX_BUFFER_MAX        (32 * 1024 * 1024) // ceiling when it does not
 #define PLEX_MIN_FREE_SD_BYTES (2LL * 1024 * 1024 * 1024)
+// Recoveries from a premature EOF that fail to advance playback at all. Each
+// one waits for the download to grow first, so this is a real ceiling on a
+// stream the player cannot make progress through, not a busy loop.
+#define PLEX_RECOVER_MAX_TRIES 12
 
 typedef enum {
     PLEX_JOB_NONE = 0,
@@ -185,7 +194,10 @@ typedef struct {
     long buf_last_bytes;
     uint32_t buf_last_ms;
     long buf_rate;        // bytes/sec over the last sample window
-    uint32_t buf_slow_ms; // time spent below the playable-rate floor
+    uint32_t buf_slow_ms;  // time spent below the playable-rate floor
+    uint32_t reopen_at_ms; // furthest position a premature-EOF recovery has run from
+    long recover_bytes;    // download frontier at the last recovery attempt
+    int recover_tries;     // consecutive recoveries that have not advanced playback
 
     // Widgets
     lv_obj_t *header;
@@ -942,6 +954,16 @@ static bool plex_stream_step_down(const char *reason) {
     return true;
 }
 
+// The movie's real runtime in ms: the server's exact figure when it gave us
+// one, otherwise the library listing's whole-minute duration.
+static uint32_t plex_runtime_ms(void) {
+    long long const exact = plexstream_runtime_ms();
+    if (exact > 0) {
+        return (uint32_t)exact;
+    }
+    return (uint32_t)g_plex.movies[g_plex.cur_sel].duration_min * 60000u;
+}
+
 static void plex_launch_player(void) {
     plex_movie_t *m = &g_plex.movies[g_plex.cur_sel];
     // Breadcrumb straight to the SD card (hwlog fsyncs each line): the
@@ -950,10 +972,13 @@ static void plex_launch_player(void) {
     hwlog("plex: launch item=%s bytes=%ld tier=%d",
           m->rating_key, plexstream_bytes(), g_plex.stream_tier);
     g_plex.playing = true;
+    g_plex.reopen_at_ms = 0;
+    g_plex.recover_bytes = 0;
+    g_plex.recover_tries = 0;
     app_state_push(APP_STATE_PLAYBACK);
     mplayer_file(PLEXSTREAM_FILE);
     // The growing TS misreports its length; show the movie's real runtime
-    media_override_duration(media, (uint32_t)m->duration_min * 60000u);
+    media_override_duration(media, plex_runtime_ms());
 }
 
 static void plex_end_playback(void) {
@@ -961,6 +986,67 @@ static void plex_end_playback(void) {
     plexstream_stop();
     app_state_push(APP_STATE_SUBMENU);
     plex_state_browse();
+}
+
+// The platform demuxer fixes a file's duration from its size at open, so a
+// stream that is still downloading "ends" long before the movie does (8 MB
+// was reported as 35 s). Rebuild the pipeline against the bigger file and
+// carry on from where the picture stopped.
+//
+// Each reopen sees a much larger file than the last (the download outruns
+// playback several times over), so the duration grows geometrically and a
+// whole movie needs only a few of these.
+static void plex_handle_playback_end(void) {
+    uint32_t const runtime_ms = plex_runtime_ms();
+    uint32_t const pos = media_position(media);
+
+    // Genuinely finished: within a whisker of the real runtime.
+    if (runtime_ms > 0 && pos + 5000 >= runtime_ms) {
+        hwlog("plex: playback ended at %ums of %ums", pos, runtime_ms);
+        plex_end_playback();
+        return;
+    }
+
+    // The demuxer ends the file when its prefetch reaches a PES packet that
+    // the download has only half written ("PES packet does not carry enough
+    // data" from the TS parser). Recovering before more of the stream has
+    // landed just walks into the same truncated packet, so wait for the
+    // frontier to move first. This can happen before the first frame is
+    // shown, so position 0 is a normal starting point, not a failure.
+    long const bytes = plexstream_bytes();
+    if (bytes <= g_plex.recover_bytes) {
+        if (plexstream_failed() || plexstream_complete()) {
+            hwlog("plex: no more data at %ums of %ums, ending", pos, runtime_ms);
+            plex_end_playback();
+        }
+        return; // still downloading - let the frontier advance
+    }
+    g_plex.recover_bytes = bytes;
+
+    if (pos > g_plex.reopen_at_ms) {
+        g_plex.reopen_at_ms = pos;
+        g_plex.recover_tries = 0;
+    }
+    if (++g_plex.recover_tries > PLEX_RECOVER_MAX_TRIES) {
+        hwlog("plex: stuck at %ums of %ums after %d tries, ending",
+              pos, runtime_ms, g_plex.recover_tries - 1);
+        plex_end_playback();
+        return;
+    }
+
+    // Seek to the exact stop position. Keyframe alignment lands within a
+    // second or two either side of it - measured on device, biasing the
+    // request forward to compensate only made it overshoot the next
+    // keyframe and skip 6-25s of the movie.
+    if (g_plex.recover_tries == 1 && media_resume_at(media, pos)) {
+        return; // cheap in-place resume: no teardown, no black frame
+    }
+
+    // In-place resume did not take; rebuild the pipeline. Costs a ~1s black
+    // frame but is known to work.
+    hwlog("plex: rebuilding at %ums (try %d)", pos, g_plex.recover_tries);
+    mplayer_reopen_at(pos);
+    media_override_duration(media, runtime_ms);
 }
 
 /**
@@ -974,6 +1060,17 @@ static void plex_timer_cb(lv_timer_t *timer) {
     // top of the live decode - double media_init wedged the whole device
     // (seen in field hwlogs as three launches in 1.5 s, then a freeze).
     if (g_plex.playing) {
+        // The preallocated stream file is longer than the movie, so playback
+        // has to be stopped on the known runtime - past that point the file
+        // holds whatever the previous stream left behind.
+        uint32_t const runtime_ms = plex_runtime_ms();
+        if (runtime_ms > 0 && media_position(media) >= runtime_ms) {
+            hwlog("plex: reached runtime %ums, ending playback", runtime_ms);
+            plex_end_playback();
+        } else if (media_completed(media)) {
+            // Demuxer called the end of a file that is still downloading.
+            plex_handle_playback_end();
+        }
         return;
     }
 
@@ -1157,8 +1254,14 @@ static void plex_timer_cb(lv_timer_t *timer) {
             return;
         }
         long bytes = plexstream_bytes();
-        if (bytes >= PLEX_BUFFER_START || (bytes > 0 && plexstream_complete())) {
-            plex_launch_player();
+
+        // No bytes flow while the card is being prepared; charging that time
+        // to the server would trip the slow-stream tier step-down below.
+        if (plexstream_preparing()) {
+            g_plex.buf_last_ms = lv_tick_get();
+            g_plex.buf_last_bytes = 0;
+            g_plex.buf_slow_ms = 0;
+            plex_show_status(_lang("Preparing the SD card for streaming...\nThis happens once."));
             return;
         }
 
@@ -1167,7 +1270,15 @@ static void plex_timer_cb(lv_timer_t *timer) {
         uint32_t now = lv_tick_get();
         if (now - g_plex.buf_last_ms >= 2000) {
             long dt = (long)(now - g_plex.buf_last_ms);
-            g_plex.buf_rate = (bytes - g_plex.buf_last_bytes) * 1000 / dt;
+            // A restarted stream (tier step-down) resets the byte count, which
+            // would otherwise read as a negative rate
+            if (bytes < g_plex.buf_last_bytes) {
+                g_plex.buf_last_bytes = 0;
+            }
+            // 64-bit: long is 32 bits here, and delta*1000 overflows it for
+            // any delta past ~2MB. The wrapped value read as a stalled server
+            // and could drop a perfectly healthy stream a quality tier.
+            g_plex.buf_rate = (long)(((long long)(bytes - g_plex.buf_last_bytes) * 1000LL) / dt);
             g_plex.buf_last_bytes = bytes;
             g_plex.buf_last_ms = now;
             g_plex.buf_slow_ms = (g_plex.buf_rate < PLEX_MIN_STREAM_BPS) ? g_plex.buf_slow_ms + dt : 0;
@@ -1182,6 +1293,26 @@ static void plex_timer_cb(lv_timer_t *timer) {
                 }
             }
         }
+        // Start playing once the head start is big enough to outlast the
+        // transcoder's slow start. A server converting slower than the video
+        // plays eats into the buffer, so the lead has to grow in proportion
+        // to how far behind it is - measured on a 4K HEVC source, the encode
+        // needs a few seconds to reach full speed and then stays ahead.
+        long const need_bps = (long)plex_quality_kbps[g_plex.stream_tier] * 1000 / 8;
+        long required = PLEX_BUFFER_START;
+        if (g_plex.buf_rate > 0 && g_plex.buf_rate < need_bps) {
+            required = PLEX_BUFFER_START * (need_bps / g_plex.buf_rate + 1);
+            if (required > PLEX_BUFFER_MAX) {
+                required = PLEX_BUFFER_MAX;
+            }
+        }
+        if (bytes >= required || (bytes > 0 && plexstream_complete())) {
+            hwlog("plex: buffered %ldMB (needed %ldMB, rate %ldKB/s) - starting",
+                  bytes / (1024 * 1024), required / (1024 * 1024), g_plex.buf_rate / 1024);
+            plex_launch_player();
+            return;
+        }
+
         char buf[160];
         if (g_plex.buf_rate < 0) {
             snprintf(buf, sizeof(buf), "%s %ld MB...", _lang("Buffering"), bytes / (1024 * 1024));
@@ -1282,6 +1413,19 @@ static void plex_setup_row_activate(void) {
         plex_show_status(_lang("Type the server IP address (optionally :port),\nthen click the Func button to submit.\nUse :8096 for a Jellyfin server (:32400 or none = Plex)."));
         keyboard_set_text(active_host());
         keyboard_open();
+    }
+}
+
+bool plex_playback_active(void) {
+    return g_plex.playing;
+}
+
+void plex_playback_key(uint8_t key) {
+    if (!g_plex.playing) {
+        return;
+    }
+    if (mplayer_on_key(key)) {
+        plex_end_playback();
     }
 }
 

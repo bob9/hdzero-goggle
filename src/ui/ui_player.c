@@ -27,6 +27,7 @@ static lv_style_t style_bg;
 static lv_style_t style_bar;
 // media control
 media_t *media;
+static char mplayer_filename[256];
 player_cmd_t cmd;
 
 LV_IMG_DECLARE(img_Play_0);
@@ -458,6 +459,7 @@ void media_seek(uint32_t seekto) {
 // interface func
 void mplayer_file(char *fname) {
     LOGI("mplayer %s", fname);
+    snprintf(mplayer_filename, sizeof(mplayer_filename), "%s", fname);
     // Stage breadcrumbs to the SD card: a hard freeze in here takes the
     // whole device, and hwlog's fsync'd lines are the only evidence left
     hwlog("mplayer: open %s", fname);
@@ -486,6 +488,39 @@ void mplayer_file(char *fname) {
     hwlog("mplayer: media started");
     update_mplayer();
     bar_hide_timer = lv_timer_create(bar_hide_cb, BAR_HIDE_MS, NULL);
+}
+
+// Re-open the file the player is already showing and resume at `ms`.
+//
+// The platform demuxer derives a file's duration from its size at open
+// (measured: 8 MB of a still-downloading stream was reported as 35.5 s) and
+// ends playback there. Re-opening against the now-larger file yields a much
+// longer duration, so a stream that outruns playback needs only a handful of
+// these over a whole movie.
+//
+// The UI (control bar, stars, display mode) is deliberately left standing:
+// only the media pipeline is rebuilt.
+void mplayer_reopen_at(uint32_t ms) {
+    if (!media) {
+        return;
+    }
+
+    hwlog("mplayer: reopen at %ums", ms);
+    pthread_mutex_unlock(&lvgl_mutex);
+    media_exit(media);
+    media = NULL;
+    pthread_mutex_lock(&lvgl_mutex);
+
+    media_init(mplayer_filename);
+    if (!media) {
+        LOGE("mplayer: reopen failed");
+        return;
+    }
+    media_start();
+    if (ms > 0) {
+        media_seek(ms);
+    }
+    hwlog("mplayer: reopened");
 }
 
 void mplayer_exit() {

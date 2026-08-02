@@ -643,8 +643,20 @@ int plex_stream_download(const char *path, const char *dest_file, plex_stream_st
     char head[4096];
     size_t head_len = 0;
     char *body_start = NULL;
+    int head_quiet = 0;
     while (head_len < sizeof(head) - 1) {
         ssize_t n = read(fd, head + head_len, sizeof(head) - 1 - head_len);
+        // A cold transcode can take longer than the socket timeout to emit
+        // its headers; that is not a network failure (see lanhttp_download)
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+            if (++head_quiet >= 12) {
+                LOGE("plex: no response headers after 60s");
+                close(fd);
+                state->done = true;
+                return PLEX_ERR_NET;
+            }
+            continue;
+        }
         if (n <= 0) {
             close(fd);
             state->done = true;
@@ -666,7 +678,12 @@ int plex_stream_download(const char *path, const char *dest_file, plex_stream_st
         return state->result;
     }
 
-    FILE *out = fopen(dest_file, "wb");
+    // Overwrite from the front rather than truncating, so a preallocated
+    // stream file keeps its size (see plexstream.h).
+    FILE *out = fopen(dest_file, "r+b");
+    if (!out) {
+        out = fopen(dest_file, "wb");
+    }
     if (!out) {
         close(fd);
         state->done = true;

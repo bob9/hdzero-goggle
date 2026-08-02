@@ -46,6 +46,19 @@ int media_retimed_hz(media_t *media); // 0 = stock display timing, 60/90 = retim
 // growing on disk): report this duration to the UI instead of the demuxer's.
 void media_override_duration(media_t *media, uint32_t ms);
 
+// Playback reached the demuxer's idea of the end of the file. For a stream
+// still downloading that end is premature - see mplayer_reopen_at().
+bool media_completed(media_t *media);
+
+// Clear that premature end and carry on from `ms` without rebuilding the
+// pipeline - no black frame, unlike mplayer_reopen_at(). Returns false if
+// the platform refused, in which case the caller should fall back to a full
+// reopen.
+bool media_resume_at(media_t *media, uint32_t ms);
+
+// Last real playback position in ms (survives the -2 the EOF path writes).
+uint32_t media_position(media_t *media);
+
 #ifdef __cplusplus
 }
 #endif

@@ -40,6 +40,16 @@ int jf_quickconnect_poll(const char *secret);
 /** Adopt token (line 1) and optional host[:port] (line 2) from /mnt/extsd/jellyfintoken.txt. */
 bool jf_token_from_sdcard(void);
 
+/**
+ * Open a playback session (POST /Items/{id}/PlaybackInfo) before streaming.
+ * Fills play_session with the id the SERVER issues - progress reports quoting
+ * a self-invented id match no session - and runtime_ms with the exact runtime
+ * (the library listing only carries whole minutes). Returns PLEX_OK on
+ * success; the caller can fall back to a local id and the rounded runtime.
+ */
+int jf_playback_info(const char *item_id, int max_kbps, char *play_session, int session_size,
+                     long long *runtime_ms);
+
 /** Build the transcoded-TS stream request path for a movie. */
 void jf_stream_path(char *buf, int size, const plex_movie_t *movie, int offset_s, int max_kbps,
                     const char *play_session);
