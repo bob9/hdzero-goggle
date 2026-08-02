@@ -475,7 +475,7 @@ int jf_fetch_poster(const plex_movie_t *movie, int width, int height, char *path
     char tmp[300];
     snprintf(tmp, sizeof(tmp), "%s.part", path_out);
     lan_stream_state_t st = {0};
-    int rc = lanhttp_download(g_setting.jellyfin.host, g_setting.jellyfin.port, path, headers, tmp, &st);
+    int rc = lanhttp_download(g_setting.jellyfin.host, g_setting.jellyfin.port, path, headers, tmp, &st, false);
     if (rc != 0 || st.bytes == 0 || rename(tmp, path_out) != 0) {
         unlink(tmp);
         return PLEX_ERR_NET;
@@ -603,6 +603,56 @@ bool jf_token_from_sdcard(void) {
     return true;
 }
 
+// Ask the server to open a playback session before streaming. Two things
+// come back that are worth having: the PlaySessionId the server itself
+// issues (progress reports have to quote it or they match no session, and
+// the transcode throttler is driven off those reports), and the exact
+// runtime, which the library listing only carries rounded to whole minutes.
+int jf_playback_info(const char *item_id, int max_kbps, char *play_session, int session_size,
+                     long long *runtime_ms) {
+    char path[256];
+    snprintf(path, sizeof(path), "/Items/%s/PlaybackInfo?userId=%s",
+             item_id, g_setting.jellyfin.user_id);
+
+    char headers[512];
+    jf_headers(headers, sizeof(headers), true);
+
+    // The profile mirrors what jf_stream_path actually requests, so the
+    // server plans the same transcode it is about to be asked for.
+    char body[640];
+    snprintf(body, sizeof(body),
+             "{\"DeviceProfile\":{\"MaxStreamingBitrate\":%d000,"
+             "\"DirectPlayProfiles\":[],"
+             "\"TranscodingProfiles\":[{\"Container\":\"ts\",\"Type\":\"Video\","
+             "\"VideoCodec\":\"h264\",\"AudioCodec\":\"aac\",\"Protocol\":\"http\","
+             "\"Context\":\"Streaming\",\"MaxAudioChannels\":\"2\"}]}}",
+             max_kbps);
+
+    char *resp = NULL;
+    int status = lanhttp_request(g_setting.jellyfin.host, g_setting.jellyfin.port,
+                                 "POST", path, headers, body, &resp, NULL);
+    int rc = jf_map_status(status);
+    if (rc != PLEX_OK || !resp) {
+        free(resp);
+        return rc == PLEX_OK ? PLEX_ERR_PROTO : rc;
+    }
+
+    bool const got_session = json_str(resp, "PlaySessionId", play_session, session_size);
+
+    if (runtime_ms) {
+        const char *src = json_array_first(resp, "MediaSources");
+        long long const ticks = src ? json_ll(src, "RunTimeTicks", 0) : 0;
+        *runtime_ms = ticks / 10000LL; // 100ns ticks -> ms
+    }
+    free(resp);
+
+    if (!got_session) {
+        return PLEX_ERR_PROTO;
+    }
+    LOGI("jellyfin: playback session %s, runtime %lldms", play_session, runtime_ms ? *runtime_ms : 0);
+    return PLEX_OK;
+}
+
 void jf_stream_path(char *buf, int size, const plex_movie_t *movie, int offset_s, int max_kbps,
                     const char *play_session) {
     // Continuous transcoded TS over one HTTP response; the token travels
@@ -630,7 +680,7 @@ void jf_stream_path(char *buf, int size, const plex_movie_t *movie, int offset_s
 }
 
 int jf_stream_download(const char *path, const char *dest_file, lan_stream_state_t *state) {
-    return lanhttp_download(g_setting.jellyfin.host, g_setting.jellyfin.port, path, NULL, dest_file, state);
+    return lanhttp_download(g_setting.jellyfin.host, g_setting.jellyfin.port, path, NULL, dest_file, state, true);
 }
 
 void jf_playback_report(const char *item_id, const char *play_session,

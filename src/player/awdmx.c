@@ -20,6 +20,8 @@
 #include <mpi_sys.h>
 #include <mpi_vdec.h>
 
+#include "util/hwlog.h"
+
 static ERRORTYPE MPPCallbackWrapper(void *cookie, MPP_CHN_S *pChn, MPP_EVENT_TYPE event, void *pEventData) {
     AwdmxContext_t *dmxCtx = (AwdmxContext_t *)cookie;
 
@@ -184,6 +186,9 @@ AwdmxContext_t *awdmx_open(char *sFile, CB_onDmxEof cbOnEof, void *context) {
     dmxCtx->codecType = DemuxMediaInfo.mVideoStreamInfo[nIndex].mCodecType;
     dmxCtx->fpsX1000 = DemuxMediaInfo.mVideoStreamInfo[nIndex].mFrameRate;
     dmxCtx->msDuration = DemuxMediaInfo.mDuration;
+    hwlog("awdmx: open size=%lld msDuration=%d video=%dx%d codec=%d",
+          (long long)lseek(dmxCtx->srcFd, 0, SEEK_END), dmxCtx->msDuration,
+          dmxCtx->width, dmxCtx->height, dmxCtx->codecType);
     LOGD("stream info %dx%d @%dmfps", DemuxMediaInfo.mVideoStreamInfo[nIndex].mWidth, DemuxMediaInfo.mVideoStreamInfo[nIndex].mHeight, dmxCtx->fpsX1000);
 
     if (DemuxMediaInfo.mAudioNum > 0) {
@@ -198,7 +203,19 @@ AwdmxContext_t *awdmx_open(char *sFile, CB_onDmxEof cbOnEof, void *context) {
              dmxCtx->bitsPerSample,
              dmxCtx->aCodecType);
 
+        hwlog("awdmx: audio codec=%d %dHz %dch %dbits (num=%d)",
+              dmxCtx->aCodecType, dmxCtx->sampleRate, dmxCtx->channels,
+              dmxCtx->bitsPerSample, dmxCtx->audioNum);
+
+        // A TS that is still downloading routinely parses with no audio
+        // format at all (measured: codec reported, 0Hz/0ch/0bits), so these
+        // defaults are what actually configures the audio decoder for every
+        // streamed movie - not a rare fallback. They match what the server
+        // is asked to produce (48kHz stereo AAC); a stream in any other
+        // format would play at the wrong rate, which sounds like crackling.
         if (dmxCtx->sampleRate == 0) {
+            hwlog("awdmx: audio params missing, defaulting to %dHz %dch %dbits",
+                  AUDIO_defSampleRate, AUDIO_defChannels, AUDIO_defSampleBits);
             dmxCtx->channels = AUDIO_defChannels;
             dmxCtx->bitsPerSample = AUDIO_defSampleBits;
             dmxCtx->sampleRate = AUDIO_defSampleRate;

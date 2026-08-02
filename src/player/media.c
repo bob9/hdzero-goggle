@@ -72,6 +72,7 @@ typedef struct
     pthread_mutex_t mutex;
 
     int playingTime;             // ms
+    int lastGoodMs;              // last playingTime before EOF drove it negative
     int retimedHz;               // nonzero while the UI output is retimed for this file
     int fps;                     // measured decoded frames/sec, updated once a second
     uint32_t durationOverrideMs; // nonzero: report this instead of the demuxer's duration
@@ -179,6 +180,9 @@ void *thread_media(void *params) {
         play_moveStatus(playCtx);
         if (!vdec2vo_isEOF(playCtx->vv)) {
             vdec2vo_currentMediaTime(playCtx->vv, &playCtx->playingTime);
+            if (playCtx->playingTime > 0) {
+                playCtx->lastGoodMs = playCtx->playingTime;
+            }
         } else {
             playCtx->playingTime = -2;
         }
@@ -395,6 +399,52 @@ int media_retimed_hz(media_t *media) {
     if (!media)
         return 0;
     return ((PlayContext_t *)media->context)->retimedHz;
+}
+
+// Resume in place after the demuxer called a premature end of file.
+//
+// Nothing is torn down: vdec2vo_seekTo/adec2ao_seekTo clear the latched EOF
+// flags and AW_MPI_DEMUX_Seek re-drives the demuxer against the file, which
+// has grown since it stopped. Far cheaper than rebuilding the pipeline, and
+// the decoder and video output never leave their configured state.
+bool media_resume_at(media_t *media, uint32_t ms) {
+    if (!media)
+        return false;
+    PlayContext_t *playCtx = (PlayContext_t *)media->context;
+
+    pthread_mutex_lock(&playCtx->mutex);
+    playCtx->state &= ~PLAY_statCOMPLETED;
+    playCtx->state |= PLAY_statSEEKING;
+    int ret = play_seekto(playCtx, (int)ms);
+    if (ret == SUCCESS) {
+        ret = play_start(playCtx);
+    }
+    playCtx->state &= ~PLAY_statSEEKING;
+    pthread_mutex_unlock(&playCtx->mutex);
+
+    hwlog("media: resume at %ums ret=%d", ms, ret);
+    return ret == SUCCESS;
+}
+
+bool media_completed(media_t *media) {
+    if (!media)
+        return false;
+    PlayContext_t *playCtx = (PlayContext_t *)media->context;
+    pthread_mutex_lock(&playCtx->mutex);
+    bool const done = (playCtx->state & PLAY_statCOMPLETED) != 0;
+    pthread_mutex_unlock(&playCtx->mutex);
+    return done;
+}
+
+uint32_t media_position(media_t *media) {
+    if (!media)
+        return 0;
+    PlayContext_t *playCtx = (PlayContext_t *)media->context;
+    pthread_mutex_lock(&playCtx->mutex);
+    // playingTime goes to -2 at EOF, so report the last real position
+    int const ms = playCtx->lastGoodMs;
+    pthread_mutex_unlock(&playCtx->mutex);
+    return ms > 0 ? (uint32_t)ms : 0;
 }
 
 void media_override_duration(media_t *media, uint32_t ms) {

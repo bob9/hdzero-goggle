@@ -39,6 +39,10 @@ uint8_t mplayer_on_key(uint8_t key);
 void mplayer_set_time(uint32_t now, uint32_t duration);
 void mplayer_file(char *fname);
 
+// Rebuild the media pipeline against the same (still growing) file and resume
+// at `ms`. See the definition for why a downloading stream needs this.
+void mplayer_reopen_at(uint32_t ms);
+
 #ifdef __cplusplus
 }
 #endif

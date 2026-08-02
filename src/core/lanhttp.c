@@ -345,7 +345,7 @@ int lanhttp_post_file(const char *host, int port, const char *path,
 
 int lanhttp_download(const char *host, int port, const char *path,
                      const char *extra_headers, const char *dest_file,
-                     lan_stream_state_t *state) {
+                     lan_stream_state_t *state, bool keep_existing) {
     state->bytes = 0;
     state->done = false;
     state->result = LANHTTP_ERR_NET;
@@ -364,8 +364,23 @@ int lanhttp_download(const char *host, int port, const char *path,
     char head[4096];
     size_t head_len = 0;
     char *body_start = NULL;
+    int head_quiet = 0;
     while (head_len < sizeof(head) - 1) {
         ssize_t n = read(fd, head + head_len, sizeof(head) - 1 - head_len);
+        // A cold transcode can take far longer than the socket timeout to
+        // emit its response headers - starting a 4K HEVC encode from scratch
+        // routinely exceeds it. Treating that timeout as a network failure
+        // made the first play after every restart fail (bytes=0), only to
+        // succeed on the retry against the now-warm transcode.
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+            if (++head_quiet >= 12) { // 12 x LANHTTP_IO_TIMEOUT_S = 60s
+                LOGE("lanhttp: no response headers after 60s");
+                close(fd);
+                state->done = true;
+                return LANHTTP_ERR_NET;
+            }
+            continue;
+        }
         if (n <= 0) {
             close(fd);
             state->done = true;
@@ -387,7 +402,13 @@ int lanhttp_download(const char *host, int port, const char *path,
         return state->result;
     }
 
-    FILE *out = fopen(dest_file, "wb");
+    // keep_existing writes from the front without truncating, to preserve a
+    // preallocated stream file (see plexstream.h). Everything else wants a
+    // plain truncating create - a leftover tail would corrupt the result.
+    FILE *out = keep_existing ? fopen(dest_file, "r+b") : NULL;
+    if (!out) {
+        out = fopen(dest_file, "wb");
+    }
     if (!out) {
         close(fd);
         state->done = true;
