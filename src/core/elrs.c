@@ -28,7 +28,6 @@
 #include "core/osd.h"
 #include "core/scan_core.h"
 #include "core/settings.h"
-#include "craft/craft_hdz.h"
 #include "doom/doom_hdz.h"
 #include "quake/quake_hdz.h"
 #include "driver/beep.h"
@@ -375,7 +374,6 @@ void msp_process_packet() {
         switch (packet.function) {
         case MSP_DOOM_INPUT:
             doom_hdz_msp_input(packet.payload, packet.payload_size);
-            craft_hdz_msp_input(packet.payload, packet.payload_size);
             quake_hdz_msp_input(packet.payload, packet.payload_size);
             break;
         case MSP_GET_BAND_CHAN: {
@@ -793,7 +791,6 @@ static void handle_osd(uint8_t payload[], uint8_t size) {
                // MSP functions but forwards MSP_ELRS_SET_OSD verbatim, so
                // transmitters ride the button mask in on this subcommand
         doom_hdz_msp_input(&payload[1], size - 1);
-        craft_hdz_msp_input(&payload[1], size - 1);
         quake_hdz_msp_input(&payload[1], size - 1);
         break;
     }

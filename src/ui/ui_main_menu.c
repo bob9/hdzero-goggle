@@ -25,7 +25,6 @@
 #include "ui/page_imagesettings.h"
 #include "ui/page_input.h"
 #include "ui/page_osd.h"
-#include "ui/page_craft.h"
 #include "ui/page_doom.h"
 #include "ui/page_quake.h"
 #include "ui/page_playback.h"
@@ -56,8 +55,8 @@ static lv_obj_t *root_page;
  * To contain all menu pages.
  */
 
-// The games build stacks DOOM/Minecraft/QUAKE on top of the cinema pages, so it
-// registers more entries than either branch did alone - 26 at present.
+// The games build stacks DOOM and QUAKE on top of the cinema pages, so it
+// registers more entries than either branch did alone - 25 at present.
 #define PAGE_PACK_MAX_NUM 30
 
 static page_pack_t *page_packs[PAGE_PACK_MAX_NUM];
@@ -350,7 +349,6 @@ void main_menu_init(void) {
     page_packs[page_packs_count++] = &pp_analog_rssi;
 #endif
     page_packs[page_packs_count++] = &pp_doom;
-    page_packs[page_packs_count++] = &pp_craft;
     page_packs[page_packs_count++] = &pp_quake;
     page_packs[page_packs_count++] = &pp_sleep;
     page_packs[page_packs_count++] = &pp_shutdown;

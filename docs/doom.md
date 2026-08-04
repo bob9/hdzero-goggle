@@ -48,7 +48,7 @@ sticks -> ELRS TX module (fork) -> TX backpack (stock) -> ESP-NOW -> goggle back
 
 Mapping (fixed in firmware; remap anything with the radio mixer):
 Mode 2 FPV-style: throttle = walk forward/back (middle = stop),
-elevator = look up/down (QUAKE and MINECRAFT), aileron = turn,
+elevator = look up/down (QUAKE), aileron = turn,
 rudder = strafe, AUX2 = fire, AUX3 = use, AUX4 = Enter, AUX5 = Escape,
 AUX6 = Y (confirm y/n prompts), AUX7 = 6POS weapon select,
 AUX10 = doom mode on/off.
@@ -81,7 +81,7 @@ is CH6. The firmware reads these channels and nothing else:
 | EdgeTX channel | ELRS name | Source            | Doom action                    |
 | -------------- | --------- | ----------------- | ------------------------------ |
 | CH1            | -         | Aileron (stick)   | Turn left / right              |
-| CH2            | -         | Elevator (stick)  | Look up / down (QUAKE, MINECRAFT) |
+| CH2            | -         | Elevator (stick)  | Look up / down (QUAKE) |
 | CH3            | -         | Throttle (stick)  | Walk forward / back (middle = stop) |
 | CH4            | -         | Rudder (stick)    | Strafe left / right            |
 | CH5            | AUX1      | -                 | (unused, typically arm on quads) |
@@ -169,20 +169,6 @@ all-released mask if the radio goes quiet for 600ms.
   resumes where you were.
 - Sound is not implemented.
 - The DVR/live video paths are untouched by this branch.
-
-## MINECRAFT
-
-The same build also adds a **MINECRAFT** menu entry: a Minecraft4k-style
-voxel world (software ray-marched 64x64x64 block terrain with trees) - walk
-around, dig blocks, place blocks. It is a homage mini-game, not the real
-Minecraft.
-
-Controls mirror DOOM. Goggles: dial turns, dial-click digs, right button
-short toggles walking, right button long places a block, dial long-press
-leaves (world keeps running, re-enter to resume). Transmitter: identical
-channel mapping to DOOM - sticks move/turn/strafe, AUX2 (fire) digs,
-AUX3 (use) places, AUX4 (enter) jumps, AUX10 doom-mode switch enables the
-sticks. One-block steps are climbed automatically.
 
 ## QUAKE
 

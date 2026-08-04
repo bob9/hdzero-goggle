@@ -1,7 +1,7 @@
 # Custom HDZero Goggles Firmware — Cinema + Games build
 
 > **You are on the `games` branch.** This is the standard Cinema build **plus**
-> DOOM, QUAKE and Minecraft. Games are deliberately kept out of the standard
+> DOOM and QUAKE. Games are deliberately kept out of the standard
 > release — for that, use `main`.
 
 This build is the latest HDZero goggle firmware, plus ripples' custom firmware
@@ -19,7 +19,7 @@ https://www.paypal.com/paypalme/ripleyjb
 | Release | Contents |
 | --- | --- |
 | **Standard** (`main`, `v9.6.0`) | Everything documented below except Games. This is the normal install. |
-| **Games** (`games`, `v9.6.0-games`) | ← **this branch.** The standard build **plus** DOOM, QUAKE and Minecraft, playable from the transmitter. |
+| **Games** (`games`, `v9.6.0-games`) | ← **this branch.** The standard build **plus** DOOM and QUAKE, playable from the transmitter. |
 | **Screen recorder** (`screen-recorder`) | The standard build **plus** on-goggle screen recording to the SD card, for capturing demo footage without filming through the lens. |
 
 ---
@@ -135,7 +135,7 @@ library. Reachable from the main menu as **Plex** and **Immich**.
 
 ## Games (this branch only)
 
-Three full-screen games run natively on the goggle, reachable from the main
+Two full-screen games run natively on the goggle, reachable from the main
 menu. See [`docs/doom.md`](docs/doom.md) for the complete setup and mixer guide.
 
 - **DOOM** — the real Doom engine ([doomgeneric](https://github.com/ozkl/doomgeneric)),
@@ -143,7 +143,6 @@ menu. See [`docs/doom.md`](docs/doom.md) for the complete setup and mixer guide.
   the SD card; `DOOM.WAD`, `DOOM2.WAD` and the Freedoom WADs also work. Savegames
   and config are written to the SD card.
 - **QUAKE** — WinQuake, sharing the Doom controller.
-- **MINECRAFT** — a voxel block world using the same controller.
 
 **Goggle-only controls** — no extra hardware: dial rotate turns, dial click
 fires, right button short-press toggles move-forward, right button long-press is
