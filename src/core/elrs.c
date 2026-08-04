@@ -28,7 +28,6 @@
 #include "core/osd.h"
 #include "core/scan_core.h"
 #include "core/settings.h"
-#include "doom/doom_hdz.h"
 #include "quake/quake_hdz.h"
 #include "driver/beep.h"
 #include "driver/dm5680.h"
@@ -373,7 +372,6 @@ void msp_process_packet() {
     if (packet.type == MSP_PACKET_COMMAND) {
         switch (packet.function) {
         case MSP_DOOM_INPUT:
-            doom_hdz_msp_input(packet.payload, packet.payload_size);
             quake_hdz_msp_input(packet.payload, packet.payload_size);
             break;
         case MSP_GET_BAND_CHAN: {
@@ -787,10 +785,9 @@ static void handle_osd(uint8_t payload[], uint8_t size) {
         memcpy(elrs_osd, elrs_osd_overlay, sizeof(elrs_osd));
         osd_signal_update();
         break;
-    case 0xD0: // DOOM input tunnel: the stock goggle backpack drops unknown
-               // MSP functions but forwards MSP_ELRS_SET_OSD verbatim, so
-               // transmitters ride the button mask in on this subcommand
-        doom_hdz_msp_input(&payload[1], size - 1);
+    case 0xD0: // Controller input tunnel: the stock goggle backpack drops
+               // unknown MSP functions but forwards MSP_ELRS_SET_OSD verbatim,
+               // so transmitters ride the button mask in on this subcommand
         quake_hdz_msp_input(&payload[1], size - 1);
         break;
     }

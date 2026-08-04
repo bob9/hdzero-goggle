@@ -13,7 +13,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "doom/doom_hdz.h" // DOOM_BTN_* button mask bits
+#include "game_input.h" // DOOM_BTN_* controller mask bits
 #include "quake_hdz.h"
 #include "quakegeneric/quakegeneric.h"
 

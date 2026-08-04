@@ -1,32 +1,38 @@
-# DOOM on HDZero Goggles
+# QUAKE on HDZero Goggles
 
-This branch adds a **DOOM** entry to the goggle main menu that runs the real
-Doom engine ([doomgeneric](https://github.com/ozkl/doomgeneric)) full-screen
-on the goggles.
+This branch adds a **QUAKE** entry to the goggle main menu that runs the real
+Quake engine (WinQuake via
+[quakegeneric](https://github.com/erysdren/quakegeneric)) full-screen on the
+goggles.
+
+DOOM is **not** in this build. The transmitter controller protocol below was
+originally defined for the DOOM port and is unchanged, so the same EdgeTX
+model, mixer setup and Lua script drive Quake without modification — which is
+why the channel and bit names still say DOOM.
 
 ## Setup
 
-1. Copy `DOOM1.WAD` (the freely distributable shareware WAD) to the **root of
-   the goggle SD card**. Also accepted: `DOOM.WAD`, `DOOM2.WAD`,
-   `freedoom1.wad`, `freedoom2.wad`.
+1. Copy Quake's `id1` folder to `SDCARD/quake/id1/`. It needs `pak0.pak` —
+   either the freely distributable shareware episode, or your registered
+   `pak0.pak` + `pak1.pak` if you own the full game.
 2. Flash this branch's firmware.
-3. Open **DOOM** in the main menu. The game starts full-screen at 640x400,
-   pixel-doubled to 1280x800.
+3. Open **QUAKE** in the main menu.
 
-Savegames and the Doom config file are written to the SD card.
+Saves and the Quake config are written to the SD card alongside the paks.
 
 ## Goggle controls (no extra hardware)
 
-| Input                    | Action                            |
-| ------------------------ | --------------------------------- |
-| Dial rotate              | Turn left / right                 |
-| Dial click               | Fire                              |
-| Right button short press | Toggle move forward               |
-| Right button long press  | Use / open doors (Enter/Y in menus) |
-| Dial long press          | Leave the game (engine pauses)    |
+| Input                    | Action                          |
+| ------------------------ | ------------------------------- |
+| Dial rotate              | Turn left / right               |
+| Dial click               | Fire                            |
+| Right button short press | Toggle move forward             |
+| Right button long press  | Jump (Enter in menus)           |
+| Dial long press          | Leave the game (engine pauses)  |
 
-Tip: in Doom's title menu, right-button **long** press is Enter — press it a
-few times to start a game on the default skill.
+Quake has no "use" action but does jump, so the right button long-press is
+**jump**, and it doubles as Enter in the menus. Escape opens the in-game menu;
+the Y switch confirms quit prompts.
 
 ## Playing with your EdgeTX radio (ESP-NOW)
 
@@ -54,7 +60,7 @@ AUX6 = Y (confirm y/n prompts), AUX7 = 6POS weapon select,
 AUX10 = doom mode on/off.
 Leaving doom mode releases all buttons.
 
-#### Step 1 — create a separate DOOM model
+#### Step 1 — create a separate game model
 
 Always use a **dedicated model** for Doom. The Doom firmware reads fixed
 channels (including ones your quad models may use for arming or modes), so
@@ -73,7 +79,7 @@ the two worlds isolated and is one page-flip away.
    backpack, not the RC link, so the module just has to be on and bound
    to your usual bind phrase.
 
-#### Step 2 — mixer: every channel Doom reads
+#### Step 2 — mixer: every channel the game reads
 
 EdgeTX channel numbers vs ELRS AUX names: **AUXn = CH(n+4)** - e.g. AUX2
 is CH6. The firmware reads these channels and nothing else:
@@ -160,7 +166,7 @@ builds.)
 | 9   | 0x0200 | Strafe right |
 | 10  | 0x0400 | Y (confirm quit and other y/n prompts) |
 
-Inputs are ignored while the DOOM page is not active. The dongle sends an
+Inputs are ignored while the QUAKE page is not active. The dongle sends an
 all-released mask if the radio goes quiet for 600ms.
 
 ## Notes
@@ -170,15 +176,17 @@ all-released mask if the radio goes quiet for 600ms.
 - Sound is not implemented.
 - The DVR/live video paths are untouched by this branch.
 
-## QUAKE
+## Licensing
 
-The build also includes **QUAKE** (WinQuake via quakegeneric). It needs the
-game data on the SD card: copy Quake's `id1` folder (containing `pak0.pak` -
-the freely distributable shareware episode, or your registered `pak0.pak` +
-`pak1.pak`) to `SDCARD/quake/id1/`. Saves and config land there too.
+The **engine** is free software: id Software released the Quake source under
+the **GPLv2** in 1999, and that is what `src/quake/quakegeneric` is.
 
-Controls mirror DOOM, with two differences because Quake has jumping and no
-"use" action: **use (AUX3) jumps**, and Enter (AUX4) / Escape (AUX5) drive
-the menus (Escape opens the in-game menu; the Y switch confirms quits).
-Goggles: dial turns, dial-click fires, right button short toggles walking,
-right button long jumps (Enter in menus), dial long-press leaves the game.
+The **game data is not**. `pak0.pak`/`pak1.pak` remain id Software/ZeniMax
+copyright. The shareware `pak0.pak` is freely redistributable under id's
+shareware terms (unmodified, non-commercial) but is not open source; the full
+paks are commercial. No pak files are bundled in this repository — you supply
+your own.
+
+Because the GPLv2 engine is statically linked into the firmware binary, the
+binary this branch produces is a **GPLv2** work, not MIT like the base
+HDZero firmware. See `LICENSING.md`.

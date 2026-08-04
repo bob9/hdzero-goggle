@@ -1,8 +1,11 @@
-# Custom HDZero Goggles Firmware — Cinema + Games build
+# Custom HDZero Goggles Firmware — Cinema + QUAKE build
 
-> **You are on the `games` branch.** This is the standard Cinema build **plus**
-> DOOM and QUAKE. Games are deliberately kept out of the standard
-> release — for that, use `main`.
+> **You are on the `quake` branch.** This is the standard Cinema build **plus**
+> QUAKE, and nothing else. No DOOM, no Minecraft. Games are deliberately kept
+> out of the standard release — for that, use `main`.
+>
+> Note: this branch's firmware binary is **GPLv2**, not MIT, because the Quake
+> engine is linked into it. See [`LICENSING.md`](LICENSING.md).
 
 This build is the latest HDZero goggle firmware, plus ripples' custom firmware
 features, plus the **Cinema** media client (Plex, Jellyfin and Immich).
@@ -19,7 +22,8 @@ https://www.paypal.com/paypalme/ripleyjb
 | Release | Contents |
 | --- | --- |
 | **Standard** (`main`, `v9.6.0`) | Everything documented below except Games. This is the normal install. |
-| **Games** (`games`, `v9.6.0-games`) | ← **this branch.** The standard build **plus** DOOM and QUAKE, playable from the transmitter. |
+| **Games** (`games`, `v9.6.0-games`) | The standard build **plus** DOOM and QUAKE, playable from the transmitter. |
+| **QUAKE only** (`quake`, `v9.6.0-quake`) | ← **this branch.** The standard build **plus** QUAKE alone. |
 | **Screen recorder** (`screen-recorder`) | The standard build **plus** on-goggle screen recording to the SD card, for capturing demo footage without filming through the lens. |
 
 ---
@@ -133,20 +137,20 @@ library. Reachable from the main menu as **Plex** and **Immich**.
 
 - Faithful RTC behaviour and macOS host support for on-desktop development.
 
-## Games (this branch only)
+## QUAKE (this branch only)
 
-Two full-screen games run natively on the goggle, reachable from the main
-menu. See [`docs/doom.md`](docs/doom.md) for the complete setup and mixer guide.
+The real Quake engine (WinQuake via
+[quakegeneric](https://github.com/erysdren/quakegeneric)) runs full-screen on
+the goggle, reachable from the main menu. See
+[`docs/quake.md`](docs/quake.md) for the complete setup and mixer guide.
 
-- **DOOM** — the real Doom engine ([doomgeneric](https://github.com/ozkl/doomgeneric)),
-  640x400 pixel-doubled to 1280x800. Copy `DOOM1.WAD` (shareware) to the root of
-  the SD card; `DOOM.WAD`, `DOOM2.WAD` and the Freedoom WADs also work. Savegames
-  and config are written to the SD card.
-- **QUAKE** — WinQuake, sharing the Doom controller.
+Copy Quake's `id1` folder to `SDCARD/quake/id1/` — the shareware `pak0.pak`
+is enough, or your registered `pak0.pak` + `pak1.pak`. Saves and config land
+there too. **No game data ships with the firmware.**
 
 **Goggle-only controls** — no extra hardware: dial rotate turns, dial click
-fires, right button short-press toggles move-forward, right button long-press is
-use/Enter, and dial long-press leaves the game.
+fires, right button short-press toggles move-forward, right button long-press
+jumps (Enter in menus), and dial long-press leaves the game.
 
 **Transmitter controls** — play with your EdgeTX radio over ESP-NOW, with both
 backpacks left stock: the button mask is tunnelled inside `MSP_ELRS_SET_OSD`,

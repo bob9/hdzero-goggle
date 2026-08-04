@@ -125,13 +125,6 @@ endif()
 
 add_executable(${PROJECT_NAME} ${SRC_FILES})
 
-# DOOM engine (doomgeneric): built as its own lib so the vintage code can
-# compile with warnings suppressed under the -Werror release flags
-file(GLOB SRC_FILES_DOOM "src/doom/*.c" "src/doom/*.h" "src/doom/doomgeneric/*.c" "src/doom/doomgeneric/*.h")
-add_library(doomcore STATIC ${SRC_FILES_DOOM})
-target_include_directories(doomcore PRIVATE src/doom/doomgeneric src/doom)
-target_compile_options(doomcore PRIVATE -w)
-
 # QUAKE engine (quakegeneric/WinQuake): its symbol names collide with the
 # Doom engine's (R_Init, S_Init, M_Init, Z_Malloc, ...), so all quake
 # objects are merged into one relocatable object and every symbol except
@@ -172,7 +165,6 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} PRIVATE
 	${STANDARD_LIBRARIES}
 
-	doomcore
 	log
 	lvgl
 	minIni
