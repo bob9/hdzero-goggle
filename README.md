@@ -1,8 +1,11 @@
-# Custom HDZero Goggles Firmware — Cinema build
+# Custom HDZero Goggles Firmware — Cinema + Games build
 
-This is the **standard install**: the latest HDZero goggle firmware, plus ripples'
-custom firmware features, plus the **Cinema** media client (Plex, Jellyfin and
-Immich) built on top.
+> **You are on the `games` branch.** This is the standard Cinema build **plus**
+> DOOM, QUAKE and Minecraft. Games are deliberately kept out of the standard
+> release — for that, use `main`.
+
+This build is the latest HDZero goggle firmware, plus ripples' custom firmware
+features, plus the **Cinema** media client (Plex, Jellyfin and Immich).
 
 Built from the official [hd-zero/hdzero-goggle](https://github.com/hd-zero/hdzero-goggle)
 firmware and [ripples' custom firmware](https://github.com/bolagnaise/hdzero-goggle),
@@ -15,8 +18,8 @@ https://www.paypal.com/paypalme/ripleyjb
 
 | Release | Contents |
 | --- | --- |
-| **Standard** (`main`, `v9.6.0`) | Everything documented below. This is what you want. |
-| **Games** (`games`, `v9.6.0-games`) | The standard build **plus** DOOM, QUAKE and Minecraft, playable from the transmitter. Not included in the standard release. |
+| **Standard** (`main`, `v9.6.0`) | Everything documented below except Games. This is the normal install. |
+| **Games** (`games`, `v9.6.0-games`) | ← **this branch.** The standard build **plus** DOOM, QUAKE and Minecraft, playable from the transmitter. |
 | **Screen recorder** (`screen-recorder`) | The standard build **plus** on-goggle screen recording to the SD card, for capturing demo footage without filming through the lens. |
 
 ---
@@ -129,6 +132,28 @@ library. Reachable from the main menu as **Plex** and **Immich**.
 ## Emulator
 
 - Faithful RTC behaviour and macOS host support for on-desktop development.
+
+## Games (this branch only)
+
+Three full-screen games run natively on the goggle, reachable from the main
+menu. See [`docs/doom.md`](docs/doom.md) for the complete setup and mixer guide.
+
+- **DOOM** — the real Doom engine ([doomgeneric](https://github.com/ozkl/doomgeneric)),
+  640x400 pixel-doubled to 1280x800. Copy `DOOM1.WAD` (shareware) to the root of
+  the SD card; `DOOM.WAD`, `DOOM2.WAD` and the Freedoom WADs also work. Savegames
+  and config are written to the SD card.
+- **QUAKE** — WinQuake, sharing the Doom controller.
+- **MINECRAFT** — a voxel block world using the same controller.
+
+**Goggle-only controls** — no extra hardware: dial rotate turns, dial click
+fires, right button short-press toggles move-forward, right button long-press is
+use/Enter, and dial long-press leaves the game.
+
+**Transmitter controls** — play with your EdgeTX radio over ESP-NOW, with both
+backpacks left stock: the button mask is tunnelled inside `MSP_ELRS_SET_OSD`,
+which the stock backpack forwards verbatim. Supports Mode 2 FPV-style sticks
+(throttle walks, elevator looks up/down), analog turn with positional pitch, and
+a weapon selector on a multi-position switch.
 
 ---
 
