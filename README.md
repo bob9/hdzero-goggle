@@ -1,8 +1,10 @@
-# Custom HDZero Goggles Firmware — Cinema build
+# Custom HDZero Goggles Firmware — Cinema + Screen Recorder build
 
-This is the **standard install**: the latest HDZero goggle firmware, plus ripples'
-custom firmware features, plus the **Cinema** media client (Plex, Jellyfin and
-Immich) built on top.
+> **You are on the `screen-recorder` branch.** This is the standard Cinema build
+> **plus** on-goggle screen recording. For the plain standard install, use `main`.
+
+This build is the latest HDZero goggle firmware, plus ripples' custom firmware
+features, plus the **Cinema** media client (Plex, Jellyfin and Immich).
 
 Built from the official [hd-zero/hdzero-goggle](https://github.com/hd-zero/hdzero-goggle)
 firmware and [ripples' custom firmware](https://github.com/bolagnaise/hdzero-goggle),
@@ -15,9 +17,9 @@ https://www.paypal.com/paypalme/ripleyjb
 
 | Release | Contents |
 | --- | --- |
-| **Standard** (`main`, `v9.6.0`) | Everything documented below. This is what you want. |
-| **Games** (`games`, `v9.6.0-games`) | The standard build **plus** DOOM, QUAKE and Minecraft, playable from the transmitter. Not included in the standard release. |
-| **Screen recorder** (`screen-recorder`) | The standard build **plus** on-goggle screen recording to the SD card, for capturing demo footage without filming through the lens. |
+| **Standard** (`main`, `v9.6.0`) | Everything documented below except Games and Screen Recording. This is the normal install. |
+| **Games** (`games`, `v9.6.0-games`) | The standard build **plus** DOOM, QUAKE and Minecraft, playable from the transmitter. |
+| **Screen recorder** (`screen-recorder`, `v9.6.0-screenrec`) | ← **this branch.** The standard build **plus** on-goggle screen recording to the SD card. |
 
 ---
 
@@ -129,6 +131,24 @@ library. Reachable from the main menu as **Plex** and **Immich**.
 ## Emulator
 
 - Faithful RTC behaviour and macOS host support for on-desktop development.
+
+## Screen recording (this branch only)
+
+Records **what is actually on the display** — menus, OSD, FPV feed, DVR
+playback, Plex — to an MP4 on the SD card, so demos no longer mean filming
+through the lens. See [`docs/screen-recording.md`](docs/screen-recording.md).
+
+- **Start and stop from the menu**: `Record Option` → `Screen Record`, which
+  shows a running timer and the filename while recording.
+- **Or from a button**: assign **Screen Record** under `Input` to any button
+  action, so you can start it and then navigate freely while it rolls.
+- Files go to `/mnt/extsd/DCIM/SCREENREC/screen_0001.mp4`, numbered in sequence.
+- **Captures the composited screen**, not just the UI layer. The interface and
+  the video layer are separate hardware; this uses the display engine's
+  write-back path so both end up in the recording.
+- 720p30 H.264, 12 Mbps, muxed to MP4 by the same packer the DVR uses.
+- Stops itself with 100 MB left on the card so the MP4 index always gets
+  written and the file always plays.
 
 ---
 

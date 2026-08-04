@@ -15,6 +15,7 @@
 #include "driver/hardware.h"
 
 #include "lang/language.h"
+#include "screenrec/screen_record.h"
 #include "ui/page_fans.h"
 #include "ui/page_source.h"
 #include "ui/ui_image_setting.h"
@@ -68,6 +69,7 @@ static const action_t btnActions[] = {
     {.id = 9, .name = "Cycle source", .functionPtr = &source_cycle},
     {.id = 11, .name = "Send VTX", .functionPtr = &elrs_send_vtx},
     {.id = 12, .name = "OSD Probe", .functionPtr = &Display_Osd_ProbeNext},
+    {.id = 13, .name = "Screen Record", .functionPtr = &screen_record_toggle},
 };
 
 static const action_t rollerActions[] = {

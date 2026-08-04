@@ -85,7 +85,7 @@ endif()
 # These GLOBs are resolved at configure time, so a build tree configured
 # before a source file was added will not see it (undefined references at
 # link). Touching this file forces existing trees to re-run cmake on the
-# next make. (Last touched for: src/core/immichapi.c, src/ui/page_immich.c)
+# next make. (Last touched for: src/screenrec/screen_record.c)
 file(GLOB SRC_FILES_CORE   "src/core/*.c" "src/core/*.h")
 file(GLOB SRC_FILES_DRIVER "src/driver/*.c" "src/driver/*.h")
 file(GLOB SRC_FILES_FONTS  "src/fonts/*.c" "src/fonts/*.h")
@@ -95,6 +95,7 @@ file(GLOB SRC_FILES_UTIL "src/util/*.c" "src/util/*.h")
 file(GLOB SRC_FILES_PLAYER "src/player/*.c" "src/player/*.h")
 file(GLOB SRC_FILES_EMULATOR "src/emulator/*.c" "src/emulator/*.h")
 file(GLOB SRC_FILES_LANG "src/lang/*.c" "src/lang/*.h")
+file(GLOB SRC_FILES_SCREENREC "src/screenrec/*.c" "src/screenrec/*.h")
 
 if(HDZ_GOGGLE)
 	file(GLOB SRC_FILES_IMAGE  "src/image/goggle/*.c" "src/image/goggle/*.h")
@@ -119,6 +120,12 @@ if(EMULATOR_BUILD)
 	list(APPEND SRC_FILES ${SRC_FILES_EMULATOR})
 else()
 	list(APPEND SRC_FILES ${SRC_FILES_PLAYER})
+	# The screen recorder needs the display engine and the hardware encoder;
+	# src/emulator/stubs.c stands in for it on the host. ffpack is shared with
+	# the record application - it includes its neighbours relatively, so it
+	# needs no include path of its own (and src/record must stay off the path,
+	# its appmsg.h/gogglemsg.h/version.h collide with src/player's).
+	list(APPEND SRC_FILES ${SRC_FILES_SCREENREC} "src/record/ffpack.c")
 endif()
 
 add_executable(${PROJECT_NAME} ${SRC_FILES})
@@ -143,6 +150,12 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 	esp-loader
 	softwinner
 )
+
+if(NOT EMULATOR_BUILD)
+	# ffpack (screen recorder MP4 muxing). These shared objects already ship
+	# on the device for the record application.
+	target_link_libraries(${PROJECT_NAME} PRIVATE ffmpeg)
+endif()
 
 if(EMULATOR_BUILD)
 	target_link_libraries(${PROJECT_NAME} PRIVATE ${SDL2_LIBRARIES})

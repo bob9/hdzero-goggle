@@ -29,6 +29,18 @@ int media_retimed_hz(media_t *media) { return 0; }
 int wav_test_play(const char *path) { return -1; }
 int wav_test_record(const char *path, int seconds) { return -1; }
 
+// Screen recording needs the display engine's write-back path and the hardware
+// encoder; neither exists on a desktop host.
+#include "screenrec/screen_record.h"
+
+bool screen_record_start(void) { return false; }
+void screen_record_stop(void) {}
+void screen_record_toggle(void) {}
+bool screen_record_is_active(void) { return false; }
+uint32_t screen_record_elapsed_s(void) { return 0; }
+const char *screen_record_filename(void) { return ""; }
+const char *screen_record_last_error(void) { return "Not available in the emulator"; }
+
 #if HDZGOGGLE
 void Display_HDZ(int mode, int is_43) {}
 #elif HDZBOXPRO

@@ -13,6 +13,7 @@
 #include "driver/rtc.h"
 #include "lang/language.h"
 #include "page_common.h"
+#include "screenrec/screen_record.h"
 #include "ui/ui_style.h"
 
 #define STOP_DELAY_MAX 30
@@ -27,6 +28,7 @@ static btn_group_t btn_group_file_naming;
 static slider_group_t slider_group_stop_delay;
 static slider_group_t slider_group_vbr_quality;
 static slider_group_t slider_group_vbr_max_qp;
+static lv_obj_t *label_screen_record = NULL;
 
 enum {
     ROW_RECORD_MODE = 0,
@@ -39,6 +41,7 @@ enum {
     ROW_RECORD_OSD,
     ROW_NAMING_SCHEME,
     ROW_STOP_DELAY,
+    ROW_SCREEN_RECORD,
     ROW_BACK,
 
     ROW_COUNT
@@ -100,6 +103,33 @@ static void update_vbr_max_qp_label() {
     else
         snprintf(buf, sizeof(buf), "%d", g_setting.record.vbr_max_qp);
     lv_label_set_text(slider_group_vbr_max_qp.label, buf);
+}
+
+// "Start" when idle, "REC 01:23  screen_0007.mp4" while running, or the reason
+// the last attempt failed. Refreshed from on_update so the clock ticks.
+static void update_screen_record_label() {
+    char buf[96];
+
+    if (label_screen_record == NULL) {
+        return;
+    }
+
+    if (screen_record_is_active()) {
+        const uint32_t s = screen_record_elapsed_s();
+        snprintf(buf, sizeof(buf), "%s  %02u:%02u  %s", _lang("Stop"),
+                 s / 60, s % 60, screen_record_filename());
+    } else if (screen_record_last_error()[0]) {
+        snprintf(buf, sizeof(buf), "%s  (%s)", _lang("Start"), screen_record_last_error());
+    } else {
+        snprintf(buf, sizeof(buf), "%s", _lang("Start"));
+    }
+
+    lv_label_set_text(label_screen_record, buf);
+}
+
+static void page_record_on_update(uint32_t delta_ms) {
+    (void)delta_ms;
+    update_screen_record_label();
 }
 
 static void update_visibility() {
@@ -165,6 +195,11 @@ static lv_obj_t *page_record_create(lv_obj_t *parent, panel_arr_t *arr) {
     create_btn_group_item(&btn_group_record_osd, cont, 2, _lang("Record OSD"), _lang("Yes"), _lang("No"), "", "", ROW_RECORD_OSD);
     create_btn_group_item(&btn_group_file_naming, cont, 3, _lang("Naming Scheme"), _lang("Digits"), _lang("Date"), "ELRS", "", ROW_NAMING_SCHEME);
     create_slider_item(&slider_group_stop_delay, cont, _lang("Auto DVR Stop Delay"), STOP_DELAY_MAX, g_setting.record.stop_delay_seconds, ROW_STOP_DELAY);
+
+    create_label_item(cont, _lang("Screen Record"), 1, ROW_SCREEN_RECORD, 1);
+    label_screen_record = create_label_item(cont, "", 2, ROW_SCREEN_RECORD, 3);
+    update_screen_record_label();
+
     snprintf(buf, sizeof(buf), "< %s", _lang("Back"));
     create_label_item(cont, buf, 1, ROW_BACK, 1);
 
@@ -358,6 +393,9 @@ static void page_record_on_click(uint8_t key, int sel) {
         stop_delay_changed = false;
         app_state_push(APP_STATE_SUBMENU_ITEM_FOCUSED);
         lv_obj_add_style(slider_group_stop_delay.slider, &style_silder_select, LV_PART_MAIN);
+    } else if (sel == ROW_SCREEN_RECORD) {
+        screen_record_toggle();
+        update_screen_record_label();
     }
 }
 
@@ -371,7 +409,7 @@ page_pack_t pp_record = {
     .enter = NULL,
     .exit = page_record_exit,
     .on_created = NULL,
-    .on_update = NULL,
+    .on_update = page_record_on_update,
     .on_roller = page_record_on_roller,
     .on_click = page_record_on_click,
     .on_right_button = NULL,
