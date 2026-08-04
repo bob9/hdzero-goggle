@@ -1,11 +1,136 @@
-# ripples' Custom HDZero Goggles Firmware
-Since many of you have asked, if you'd like to support the work I'm doing here, you can send a donation here: https://www.paypal.com/paypalme/ripleyjb
+# Custom HDZero Goggles Firmware — Cinema build
 
-As a perk, your feature requests will get priority and I'll let you preview upcoming beta features if you'd like (there's some really cool stuff to come). I'll also have a special firmware version with some extra goodies as a thank you to those who donated $10 or more. Drop your Discord username/Github username in the donation description so I know who you are if you'd like access to priority feature requests, beta firmwares and the extra goodies firmware. It is not a requirement to donate. Firmware releases will continue to be free.
+This is the **standard install**: the latest HDZero goggle firmware, plus ripples'
+custom firmware features, plus the **Cinema** media client (Plex, Jellyfin and
+Immich) built on top.
 
-If you'd like to request a feature you'd like me to add, send me a message in Discord, leave it in the #feature-suggestions channel on the HDZero Discord, or open an issue on here, and I'll get to it when I can. This is still a project I'm working on in my free time, so please set timeline expectations accordingly, but I should be faster than official firmware from the HDZ team.
+Built from the official [hd-zero/hdzero-goggle](https://github.com/hd-zero/hdzero-goggle)
+firmware and [ripples' custom firmware](https://github.com/bolagnaise/hdzero-goggle),
+both of which are fully merged into this build.
 
-I hope you enjoy my custom firmware!
+If you'd like to support ripples' upstream work, you can send a donation here:
+https://www.paypal.com/paypalme/ripleyjb
+
+## Release variants
+
+| Release | Contents |
+| --- | --- |
+| **Standard** (`main`, `v9.6.0`) | Everything documented below. This is what you want. |
+| **Games** (`games`, `v9.6.0-games`) | The standard build **plus** DOOM, QUAKE and Minecraft, playable from the transmitter. Not included in the standard release. |
+| **Screen recorder** (`screen-recorder`) | The standard build **plus** on-goggle screen recording to the SD card, for capturing demo footage without filming through the lens. |
+
+---
+
+# Features
+
+Everything in this section is in addition to stock HDZero firmware.
+
+## Cinema — Plex, Jellyfin and Immich
+
+A media client that turns the goggle into a private big screen for your own
+library. Reachable from the main menu as **Plex** and **Immich**.
+
+- **Plex movie library browsing** from a Plex Media Server on your LAN, with a
+  poster wall and background poster prefetch.
+- **TV shows** with series browsing and episode drill-down.
+- **Playback** of server-remuxed TS, streamed to the SD card and played through
+  the goggle's stock hardware-decoded player.
+- **Selectable stream quality** — 1080p, 720p or 480p — plus **automatic quality
+  step-down** when the server can't keep up with the stream.
+- **Resume where you left off**, using the server's stored playback position.
+- **Three ways to sign in**:
+  - the smart-TV flow — the goggle shows a code, you enter it at `plex.tv/link`;
+  - a `plextoken.txt` (or `jellyfintoken.txt`) file in the root of the SD card,
+    picked up automatically at boot — works with no internet;
+  - typing a token directly with the on-screen keyboard.
+- **Full Jellyfin support** behind the same movie UI, with playback-session
+  reporting so the server tracks watched state, and transcoding constrained to
+  the envelope the goggle's decoder is known to handle.
+- **Immich** — selective backup of your DVR recordings to a self-hosted Immich
+  server, authenticated with an API key.
+- **Long-press Func** exits playback and returns to the library.
+- **WiFi throughput tuning** for streaming: XR819 power-save disabled and raised
+  TCP windows.
+
+## DVR recording
+
+- **Selectable rate control** — CBR or VBR, each at three quality points, with
+  on-page explanations of what the setting does.
+- **VBR quality and maximum QP** are directly settable.
+- **Five record bitrate steps** — Normal, 1/4, 1/2, 1.5x and 2x.
+- **Correct colour** in recordings: full colour range is declared in the H.264
+  VUI, so players no longer crush or wash out the levels.
+- **Reliable record OSD** — the record indicator bit is re-asserted and read back
+  at record start.
+- **Opt-in ELRS race naming** — recordings can be named from the race label sent
+  over ELRS.
+
+## DVR playback
+
+- **True 90Hz and 60Hz playback** on both the Goggle and Goggle 2, routed through
+  the live video path.
+- **Panel refresh matched to the clip**, with the frame rate probed from the
+  `.ts` PES timestamps.
+- **Auto-hiding control bar** — fades after 4 seconds and wakes on dial input.
+- **Faster video start** — the baseband is kept warm and prewarmed in the
+  background while you browse the playback list.
+- **Receiver off during playback**, so the raster stays black behind the video.
+- **On-screen playback FPS counter** for diagnostics.
+
+## WiFi
+
+- **Laptop-style network selection** — pick a network from a scan list, with
+  remembered networks reconnecting automatically.
+- Scanning recovers from a stale `wpa_supplicant` socket instead of hanging.
+
+## ELRS and VTX control
+
+- **VTX Control** — a master switch governing whether the goggle may send VTX
+  commands at all.
+- **Send VTX is a deliberate action**, assignable to a button (default: right
+  long-press). Changing channels never auto-sends.
+- **Configurable "VTX Sent" banner** with a live preview of the style.
+- **ELRS backpack fix** — readiness-gated power-on plus a self-healing watchdog.
+
+## Clock and RTC
+
+- **Time survives power-off** — written to every RTC device present, with the
+  running clock persisted so battery-less units reboot near the right time.
+- **Set-clock rollers track the live clock** and load the current time on entry.
+- The clock page stays live while merely highlighted in the menu.
+- Correct clock-battery detection on goggles that have one installed.
+
+## Power
+
+- **Shutdown** is its own menu entry beside Go Sleep. It quiesces the recorder,
+  unmounts the SD card, and shows a safe-to-power-off screen.
+
+## Image and source
+
+- **Separate analog and HDZero image settings**, with switchable source profiles.
+- The source is confirmed before the input switches, and the HDZero loading state
+  is shown and animated rather than leaving a blank screen.
+
+## Firmware update safety
+
+- **Firmware is validated before any flash is touched** — a corrupt or truncated
+  update file can no longer brick the goggle.
+- **Honest update results** — no false `FAILED` on a successful OTA, and no false
+  success when the app partition flash actually fails.
+
+## Storage and diagnostics
+
+- The automatic SD integrity check is skipped when the FAT is already clean,
+  cutting boot time.
+- **Hardware transition log** written to `hwlog.txt` on the SD card.
+- Analog RSSI calibration sampling fixed.
+- **A power cut can no longer factory-reset your settings.**
+
+## Emulator
+
+- Faithful RTC behaviour and macOS host support for on-desktop development.
+
+---
 
 ## Environment Setup
 
@@ -39,7 +164,8 @@ Compiling HDZero Goggles:
 ~/hdzero-goggle/build_goggle$ make clean all -j $(nproc)
 ```
 
-The firmware is generated as hdzero-goggle/build_goggle/out/HDZERO_GOGGLE-77-206-1.1.2-ripples-<commit>.bin
+The firmware is generated as hdzero-goggle/build_goggle/out/HDZERO_GOGGLE-77-206-<VERSION>-<commit>.bin
+where `<VERSION>` is the contents of the `VERSION` file at the repository root.
 Tagged releases omit the commit suffix.
 
 Compiling HDZero BoxPro:
@@ -48,7 +174,7 @@ Compiling HDZero BoxPro:
 ~/hdzero-goggle/build_boxpro$ make clean all -j $(nproc)
 ```
 
-The firmware is generated as hdzero-goggle/build_boxpro/out/HDZERO_BOXPRO-77-211-1.1.2-ripples-<commit>.bin
+The firmware is generated as hdzero-goggle/build_boxpro/out/HDZERO_BOXPRO-77-211-<VERSION>-<commit>.bin
 Tagged releases omit the commit suffix.
 
 ### Building the firmware using nix
