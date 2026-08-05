@@ -1,8 +1,9 @@
-# Custom HDZero Goggles Firmware — Cinema build
+# Custom HDZero Goggles Firmware — FPV build (no Cinema)
 
-This is the **standard install**: the latest HDZero goggle firmware, plus ripples'
-custom firmware features, plus the **Cinema** media client (Plex, Jellyfin and
-Immich) built on top.
+This is the **FPV-only install**: the latest HDZero goggle firmware plus ripples'
+custom firmware features, with the **Cinema** media client (Plex, Jellyfin and
+Immich) left out entirely — no media pages in the menu, and none of its code in
+the binary. Everything else in the standard build is here unchanged.
 
 Built from the official [hd-zero/hdzero-goggle](https://github.com/hd-zero/hdzero-goggle)
 firmware and [ripples' custom firmware](https://github.com/bolagnaise/hdzero-goggle),
@@ -15,7 +16,8 @@ https://www.paypal.com/paypalme/ripleyjb
 
 | Release | Contents |
 | --- | --- |
-| **Standard** (`main`, `v9.6.0`) | Everything documented below. This is what you want. |
+| **Standard** (`main`, `v9.6.0`) | Everything documented below **plus** the Cinema media client (Plex, Jellyfin, Immich). |
+| **No Cinema** (`no-cinema`, `v9.6.0-nocinema`) | Everything documented below. The FPV firmware with no media client — this build. |
 | **Games** (`games`, `v9.6.0-games`) | The standard build **plus** DOOM, QUAKE and Minecraft, playable from the transmitter. Not included in the standard release. |
 | **Screen recorder** (`screen-recorder`) | The standard build **plus** on-goggle screen recording to the SD card, for capturing demo footage without filming through the lens. |
 
@@ -24,33 +26,6 @@ https://www.paypal.com/paypalme/ripleyjb
 # Features
 
 Everything in this section is in addition to stock HDZero firmware.
-
-## Cinema — Plex, Jellyfin and Immich
-
-A media client that turns the goggle into a private big screen for your own
-library. Reachable from the main menu as **Plex** and **Immich**.
-
-- **Plex movie library browsing** from a Plex Media Server on your LAN, with a
-  poster wall and background poster prefetch.
-- **TV shows** with series browsing and episode drill-down.
-- **Playback** of server-remuxed TS, streamed to the SD card and played through
-  the goggle's stock hardware-decoded player.
-- **Selectable stream quality** — 1080p, 720p or 480p — plus **automatic quality
-  step-down** when the server can't keep up with the stream.
-- **Resume where you left off**, using the server's stored playback position.
-- **Three ways to sign in**:
-  - the smart-TV flow — the goggle shows a code, you enter it at `plex.tv/link`;
-  - a `plextoken.txt` (or `jellyfintoken.txt`) file in the root of the SD card,
-    picked up automatically at boot — works with no internet;
-  - typing a token directly with the on-screen keyboard.
-- **Full Jellyfin support** behind the same movie UI, with playback-session
-  reporting so the server tracks watched state, and transcoding constrained to
-  the envelope the goggle's decoder is known to handle.
-- **Immich** — selective backup of your DVR recordings to a self-hosted Immich
-  server, authenticated with an API key.
-- **Long-press Func** exits playback and returns to the library.
-- **WiFi throughput tuning** for streaming: XR819 power-save disabled and raised
-  TCP windows.
 
 ## DVR recording
 
@@ -82,6 +57,7 @@ library. Reachable from the main menu as **Plex** and **Immich**.
 - **Laptop-style network selection** — pick a network from a scan list, with
   remembered networks reconnecting automatically.
 - Scanning recovers from a stale `wpa_supplicant` socket instead of hanging.
+- **Throughput tuning** — XR819 power-save disabled and raised TCP windows.
 
 ## ELRS and VTX control
 

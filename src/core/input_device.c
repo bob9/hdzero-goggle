@@ -45,7 +45,6 @@
 #include "ui/page_headtracker.h"
 #include "ui/page_imagesettings.h"
 #include "ui/page_playback.h"
-#include "ui/page_plex.h"
 #include "ui/page_power.h"
 #include "ui/page_scannow.h"
 #include "ui/page_source.h"
@@ -628,13 +627,7 @@ static void btn_press(void) // long press left key
         ui_osd_element_pos_cancel_and_hide();
         app_switch_to_menu();
     } else if (g_app_state == APP_STATE_PLAYBACK) {
-        // Streamed movies and SD recordings share this state; the long press
-        // is the only way out of the player, so it has to reach the right one
-        if (plex_playback_active()) {
-            plex_playback_key(DIAL_KEY_PRESS);
-        } else {
-            pb_key(DIAL_KEY_PRESS);
-        }
+        pb_key(DIAL_KEY_PRESS);
     } else if (g_app_state == APP_STATE_SLEEP) {
         wake_up();
     } else { // Sub-menu -> back. Page may absorb (e.g. scan_now RESULTS->IDLE);
@@ -757,9 +750,7 @@ void rbtn_click(right_button_t click_type) {
                 submenu_right_button(false);
             break;
         case APP_STATE_PLAYBACK: // the playback page routes the right button to the player
-            if (plex_playback_active()) {
-                plex_playback_key(click_type == RIGHT_CLICK ? RIGHT_KEY_CLICK : RIGHT_KEY_PRESS);
-            } else if (click_type == RIGHT_CLICK) {
+            if (click_type == RIGHT_CLICK) {
                 pb_key(RIGHT_KEY_CLICK);
             } else if (click_type == RIGHT_LONG_PRESS) {
                 pb_key(RIGHT_KEY_PRESS);

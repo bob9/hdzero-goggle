@@ -35,8 +35,8 @@ int lanhttp_request(const char *host, int port, const char *method, const char *
                     char **body_out, size_t *body_len_out);
 
 /**
- * Stream a GET response body into dest_file while updating state - the
- * same growing-file contract as plex_stream_download.
+ * Stream a GET response body into dest_file while updating state, so a
+ * reader can consume the file while it is still growing.
  *
  * keep_existing overwrites an existing dest_file from the front instead of
  * truncating it, which preserves a preallocated stream file. Pass false for
