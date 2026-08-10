@@ -577,6 +577,34 @@ void (*roller_callback)(uint8_t key) = &tune_channel;
 static void roller_up(void);
 static void roller_down(void);
 
+// True when the live source is one the dial can tune, i.e. when a long press
+// has a pending channel to act on rather than its normal assigned action.
+static bool tune_source_is_tunable(void) {
+#if defined HDZGOGGLE
+    return g_source_info.source == SOURCE_HDZERO;
+#else
+    return g_source_info.source == SOURCE_HDZERO ||
+           g_source_info.source == SOURCE_AV_MODULE;
+#endif
+}
+
+// Is this button's long press the one that transmits the pending channel to
+// the VTX? Racers were putting themselves on someone else's channel by long
+// pressing the button they thought was "back"/"menu" while the tuner was up,
+// so which gesture goes on air is now the pilot's choice (ELRS page).
+static bool tune_send_button_is(bool left) {
+    switch (g_setting.elrs.vtx_send_button) {
+    case SETTING_VTX_SEND_BUTTON_RIGHT:
+        return !left;
+    case SETTING_VTX_SEND_BUTTON_EITHER:
+        return true;
+    case SETTING_VTX_SEND_BUTTON_OFF:
+        return false;
+    default: // SETTING_VTX_SEND_BUTTON_LEFT
+        return left;
+    }
+}
+
 static void btn_press(void) // long press left key
 {
     LOGI("btn_press (%d)", g_app_state);
@@ -595,32 +623,13 @@ static void btn_press(void) // long press left key
         app_state_push(APP_STATE_VIDEO);
     } else if ((g_app_state == APP_STATE_VIDEO) || (g_app_state == APP_STATE_IMS)) { // video -> Main menu
         if (tune_timer) {
-#if defined HDZGOGGLE
-            if (g_source_info.source == SOURCE_HDZERO) {
-                tune_channel(DIAL_KEY_PRESS);
+            if (tune_source_is_tunable()) {
+                // Confirm the pending channel either way; only the assigned
+                // send button (PRESS) also puts it on air.
+                tune_channel(tune_send_button_is(true) ? DIAL_KEY_PRESS : DIAL_KEY_CLICK);
             } else {
                 (*btn_press_callback)();
             }
-#elif defined HDZBOXPRO
-            if (g_source_info.source == SOURCE_HDZERO) {
-                tune_channel(DIAL_KEY_PRESS);
-            } else if (g_source_info.source == SOURCE_AV_MODULE) {
-                tune_channel(DIAL_KEY_PRESS);
-            } else {
-                (*btn_press_callback)();
-            }
-
-#elif defined HDZGOGGLE2
-            if (g_source_info.source == SOURCE_HDZERO) {
-                tune_channel(DIAL_KEY_PRESS);
-            } else if (g_source_info.source == SOURCE_AV_MODULE) {
-                tune_channel(DIAL_KEY_PRESS);
-            } else if (g_source_info.source == SOURCE_AV_MODULE && g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_INTERNAL) {
-                tune_channel(DIAL_KEY_PRESS);
-            } else {
-                (*btn_press_callback)();
-            }
-#endif
         } else {
             (*btn_press_callback)();
         }
@@ -769,7 +778,14 @@ void rbtn_click(right_button_t click_type) {
             if (click_type == RIGHT_CLICK) {
                 (*rbtn_click_callback)();
             } else if (click_type == RIGHT_LONG_PRESS) {
-                (*rbtn_press_callback)();
+                // While the tuner is up, the right long press sends the pending
+                // channel if it is the assigned send button. Otherwise it keeps
+                // doing whatever the Input page assigned to it.
+                if (tune_timer && tune_source_is_tunable() && tune_send_button_is(false)) {
+                    tune_channel(DIAL_KEY_PRESS);
+                } else {
+                    (*rbtn_press_callback)();
+                }
             } else if (click_type == RIGHT_DOUBLE_CLICK) {
                 (*rbtn_double_click_callback)();
             }
