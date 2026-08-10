@@ -31,6 +31,7 @@ enum {
     POS_VTX_CTRL,
     POS_AUTO_SEND,
     POS_SEND_BTN,
+    POS_SEND_PRESS,
     POS_SENT_OSD,
     POS_SENT_STYLE,
     POS_PWR,
@@ -52,6 +53,7 @@ static btn_group_t elrs_group;
 static btn_group_t vtx_ctrl_group;
 static btn_group_t auto_send_group;
 static btn_group_t send_btn_group;
+static btn_group_t send_press_group;
 static btn_group_t sent_osd_group;
 static btn_group_t sent_style_group;
 static lv_obj_t *sent_preview = NULL;
@@ -90,22 +92,40 @@ static void update_sent_preview() {
         break;
     }
 
-    // Which long press goes on air. Stated plainly: getting this wrong is what
-    // puts a pilot on someone else's channel mid-race.
-    const char *sender;
-    switch (send_btn_group.current) {
-    case SETTING_VTX_SEND_BUTTON_RIGHT:
-        sender = _lang("While tuning, a right long press sends the channel; left only tunes the goggle");
-        break;
-    case SETTING_VTX_SEND_BUTTON_EITHER:
-        sender = _lang("While tuning, either long press sends the channel");
-        break;
-    case SETTING_VTX_SEND_BUTTON_OFF:
-        sender = _lang("No long press sends; only Send VTX above (or Auto Send) transmits");
-        break;
-    default:
-        sender = _lang("While tuning, a left long press sends the channel; right keeps its assigned action");
-        break;
+    // Which gesture goes on air, spelled out: getting this wrong is what puts
+    // a pilot on someone else's channel mid-race.
+    char sender[192];
+    if (send_btn_group.current == SETTING_VTX_SEND_BUTTON_OFF) {
+        snprintf(sender, sizeof(sender), "%s",
+                 _lang("No button press sends; only Send VTX above (or Auto Send) transmits"));
+    } else {
+        const char *press;
+        switch (send_press_group.current) {
+        case SETTING_VTX_SEND_PRESS_SHORT:
+            press = _lang("a short press");
+            break;
+        case SETTING_VTX_SEND_PRESS_EITHER:
+            press = _lang("a short or long press");
+            break;
+        default:
+            press = _lang("a long press");
+            break;
+        }
+        const char *which;
+        switch (send_btn_group.current) {
+        case SETTING_VTX_SEND_BUTTON_RIGHT:
+            which = _lang("the right button");
+            break;
+        case SETTING_VTX_SEND_BUTTON_EITHER:
+            which = _lang("either button");
+            break;
+        default:
+            which = _lang("the left button");
+            break;
+        }
+        snprintf(sender, sizeof(sender), "%s %s %s %s %s",
+                 _lang("While tuning,"), press, _lang("of"), which,
+                 _lang("sends the channel; anything else only tunes the goggle"));
     }
 
     snprintf(buf, sizeof(buf), "%s.\n%s.\n%s.", when,
@@ -123,16 +143,20 @@ static void update_visibility() {
     // Auto Send only means anything while sending is permitted at all
     btn_group_enable(&auto_send_group, vtxSendAllowed);
     btn_group_enable(&send_btn_group, vtxSendAllowed);
+    // The press-length choice only means anything when a button is assigned
+    btn_group_enable(&send_press_group, vtxSendAllowed && g_setting.elrs.vtx_send_button != SETTING_VTX_SEND_BUTTON_OFF);
     btn_group_enable(&sent_osd_group, vtxSendAllowed);
     btn_group_enable(&sent_style_group, vtxSendAllowed);
     if (vtxSendAllowed) {
         lv_obj_add_flag(pp_elrs.p_arr.panel[POS_AUTO_SEND], FLAG_SELECTABLE);
         lv_obj_add_flag(pp_elrs.p_arr.panel[POS_SEND_BTN], FLAG_SELECTABLE);
+        lv_obj_add_flag(pp_elrs.p_arr.panel[POS_SEND_PRESS], FLAG_SELECTABLE);
         lv_obj_add_flag(pp_elrs.p_arr.panel[POS_SENT_OSD], FLAG_SELECTABLE);
         lv_obj_add_flag(pp_elrs.p_arr.panel[POS_SENT_STYLE], FLAG_SELECTABLE);
     } else {
         lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_AUTO_SEND], FLAG_SELECTABLE);
         lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_SEND_BTN], FLAG_SELECTABLE);
+        lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_SEND_PRESS], FLAG_SELECTABLE);
         lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_SENT_OSD], FLAG_SELECTABLE);
         lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_SENT_STYLE], FLAG_SELECTABLE);
     }
@@ -208,6 +232,9 @@ static lv_obj_t *page_elrs_create(lv_obj_t *parent, panel_arr_t *arr) {
     snprintf(buf, sizeof(buf), "%s %s", _lang("Send"), _lang("Button"));
     create_btn_group_item(&send_btn_group, cont, 4, buf, _lang("Left"), _lang("Right"), _lang("Either"), _lang("Off"), POS_SEND_BTN);
     btn_group_set_sel(&send_btn_group, g_setting.elrs.vtx_send_button);
+    snprintf(buf, sizeof(buf), "%s %s", _lang("Send"), _lang("Press"));
+    create_btn_group_item(&send_press_group, cont, 3, buf, _lang("Long"), _lang("Short"), _lang("Either"), "", POS_SEND_PRESS);
+    btn_group_set_sel(&send_press_group, g_setting.elrs.vtx_send_press);
     snprintf(buf, sizeof(buf), "%s OSD", _lang("VTX Sent"));
     create_btn_group_item(&sent_osd_group, cont, 3, buf, _lang("On"), _lang("Long press"), _lang("Off"), "", POS_SENT_OSD);
     btn_group_set_sel(&sent_osd_group, g_setting.elrs.vtx_sent_osd);
@@ -336,6 +363,13 @@ static void page_elrs_on_click(uint8_t key, int sel) {
         btn_group_toggle_sel(&send_btn_group);
         g_setting.elrs.vtx_send_button = btn_group_get_sel(&send_btn_group);
         ini_putl("elrs", "vtx_send_button", g_setting.elrs.vtx_send_button, SETTING_INI);
+        update_sent_preview();
+        update_visibility();
+    } else if (sel == POS_SEND_PRESS) // short press, long press, or either
+    {
+        btn_group_toggle_sel(&send_press_group);
+        g_setting.elrs.vtx_send_press = btn_group_get_sel(&send_press_group);
+        ini_putl("elrs", "vtx_send_press", g_setting.elrs.vtx_send_press, SETTING_INI);
         update_sent_preview();
     } else if (sel == POS_SENT_OSD) // when to show the green VTX SENT banner
     {

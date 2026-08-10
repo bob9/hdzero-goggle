@@ -605,6 +605,24 @@ static bool tune_send_button_is(bool left) {
     }
 }
 
+// ...and is this press length the one that sends? Short is offered because a
+// long press is an awkward thing to hold while lining up on the gate.
+static bool tune_send_press_is(bool long_press) {
+    switch (g_setting.elrs.vtx_send_press) {
+    case SETTING_VTX_SEND_PRESS_SHORT:
+        return !long_press;
+    case SETTING_VTX_SEND_PRESS_EITHER:
+        return true;
+    default: // SETTING_VTX_SEND_PRESS_LONG
+        return long_press;
+    }
+}
+
+// Does this exact gesture transmit the pending channel to the VTX?
+static bool tune_press_sends(bool left, bool long_press) {
+    return tune_send_button_is(left) && tune_send_press_is(long_press);
+}
+
 static void btn_press(void) // long press left key
 {
     LOGI("btn_press (%d)", g_app_state);
@@ -625,8 +643,8 @@ static void btn_press(void) // long press left key
         if (tune_timer) {
             if (tune_source_is_tunable()) {
                 // Confirm the pending channel either way; only the assigned
-                // send button (PRESS) also puts it on air.
-                tune_channel(tune_send_button_is(true) ? DIAL_KEY_PRESS : DIAL_KEY_CLICK);
+                // send gesture (PRESS) also puts it on air.
+                tune_channel(tune_press_sends(true, true) ? DIAL_KEY_PRESS : DIAL_KEY_CLICK);
             } else {
                 (*btn_press_callback)();
             }
@@ -668,7 +686,13 @@ static void btn_click(void) // short press enter key
     if (g_app_state == APP_STATE_VIDEO) {
         pthread_mutex_lock(&lvgl_mutex);
         if (tune_state == 2) {
-            tune_channel_confirm();
+            // A click normally just confirms (and only sends when Auto Send
+            // VTX is on); it transmits outright when it is the chosen gesture.
+            if (tune_press_sends(true, false) && tune_source_is_tunable()) {
+                tune_channel(DIAL_KEY_PRESS);
+            } else {
+                tune_channel_confirm();
+            }
         } else {
             (*btn_click_callback)();
         }
@@ -775,13 +799,17 @@ void rbtn_click(right_button_t click_type) {
             }
             break;
         case APP_STATE_VIDEO:
+            // While the tuner is up, a right press sends the pending channel if
+            // it is the chosen send gesture. Otherwise the button keeps doing
+            // whatever the Input page assigned to it.
             if (click_type == RIGHT_CLICK) {
-                (*rbtn_click_callback)();
+                if (tune_timer && tune_source_is_tunable() && tune_press_sends(false, false)) {
+                    tune_channel(DIAL_KEY_PRESS);
+                } else {
+                    (*rbtn_click_callback)();
+                }
             } else if (click_type == RIGHT_LONG_PRESS) {
-                // While the tuner is up, the right long press sends the pending
-                // channel if it is the assigned send button. Otherwise it keeps
-                // doing whatever the Input page assigned to it.
-                if (tune_timer && tune_source_is_tunable() && tune_send_button_is(false)) {
+                if (tune_timer && tune_source_is_tunable() && tune_press_sends(false, true)) {
                     tune_channel(DIAL_KEY_PRESS);
                 } else {
                     (*rbtn_press_callback)();
