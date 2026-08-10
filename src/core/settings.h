@@ -200,6 +200,11 @@ typedef struct {
     // press" and "keep it subtle" are separate wishes, so they are separate
     // settings rather than one conflated list.
     uint8_t vtx_sent_style;
+    // Which button's long press, while the channel tuner is up, confirms the
+    // pending channel AND transmits it to the VTX. The other button's long
+    // press still confirms locally (like a click), so the goggle follows the
+    // dial without putting anyone on air by accident.
+    uint8_t vtx_send_button;
 } setting_elrs_t;
 
 typedef enum {
@@ -212,6 +217,13 @@ typedef enum {
     SETTING_VTX_SENT_STYLE_NORMAL = 0, // channel + label, green on a black pill
     SETTING_VTX_SENT_STYLE_SUBTLE = 1, // label only, dim green, no pill, brief
 } setting_vtx_sent_style_t;
+
+typedef enum {
+    SETTING_VTX_SEND_BUTTON_LEFT = 0,   // left long press (default, stock behaviour)
+    SETTING_VTX_SEND_BUTTON_RIGHT = 1,  // right long press instead
+    SETTING_VTX_SEND_BUTTON_EITHER = 2, // either long press
+    SETTING_VTX_SEND_BUTTON_OFF = 3,    // neither: only Send VTX / Auto Send transmit
+} setting_vtx_send_button_t;
 
 typedef enum {
     EMBEDDED_4x3,

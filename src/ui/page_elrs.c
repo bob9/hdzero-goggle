@@ -30,6 +30,7 @@ enum {
     POS_VTX,
     POS_VTX_CTRL,
     POS_AUTO_SEND,
+    POS_SEND_BTN,
     POS_SENT_OSD,
     POS_SENT_STYLE,
     POS_PWR,
@@ -50,6 +51,7 @@ static lv_obj_t *btn_vtx_send;
 static btn_group_t elrs_group;
 static btn_group_t vtx_ctrl_group;
 static btn_group_t auto_send_group;
+static btn_group_t send_btn_group;
 static btn_group_t sent_osd_group;
 static btn_group_t sent_style_group;
 static lv_obj_t *sent_preview = NULL;
@@ -74,11 +76,11 @@ static void update_sent_preview() {
         lv_obj_set_style_text_color(sent_preview, lv_color_make(0x00, 0xFF, 0x00), 0);
     }
 
-    char buf[256];
+    char buf[512];
     const char *when;
     switch (sent_osd_group.current) {
     case SETTING_VTX_SENT_OSD_DELIBERATE:
-        when = _lang("Shown only after a dial long press or an explicit Send VTX");
+        when = _lang("Shown only after a long press send or an explicit Send VTX");
         break;
     case SETTING_VTX_SENT_OSD_OFF:
         when = _lang("Never shown");
@@ -87,9 +89,29 @@ static void update_sent_preview() {
         when = _lang("Shown after every send");
         break;
     }
-    snprintf(buf, sizeof(buf), "%s.\n%s.", when,
+
+    // Which long press goes on air. Stated plainly: getting this wrong is what
+    // puts a pilot on someone else's channel mid-race.
+    const char *sender;
+    switch (send_btn_group.current) {
+    case SETTING_VTX_SEND_BUTTON_RIGHT:
+        sender = _lang("While tuning, a right long press sends the channel; left only tunes the goggle");
+        break;
+    case SETTING_VTX_SEND_BUTTON_EITHER:
+        sender = _lang("While tuning, either long press sends the channel");
+        break;
+    case SETTING_VTX_SEND_BUTTON_OFF:
+        sender = _lang("No long press sends; only Send VTX above (or Auto Send) transmits");
+        break;
+    default:
+        sender = _lang("While tuning, a left long press sends the channel; right keeps its assigned action");
+        break;
+    }
+
+    snprintf(buf, sizeof(buf), "%s.\n%s.\n%s.", when,
              subtle ? _lang("Subtle: label only, dimmer, no background box, and it clears faster")
-                    : _lang("Normal: channel and label in bright green on a black box"));
+                    : _lang("Normal: channel and label in bright green on a black box"),
+             sender);
     lv_label_set_text(sent_explain, buf);
 }
 
@@ -100,14 +122,17 @@ static void update_visibility() {
     btn_group_enable(&vtx_ctrl_group, backpackIsActive);
     // Auto Send only means anything while sending is permitted at all
     btn_group_enable(&auto_send_group, vtxSendAllowed);
+    btn_group_enable(&send_btn_group, vtxSendAllowed);
     btn_group_enable(&sent_osd_group, vtxSendAllowed);
     btn_group_enable(&sent_style_group, vtxSendAllowed);
     if (vtxSendAllowed) {
         lv_obj_add_flag(pp_elrs.p_arr.panel[POS_AUTO_SEND], FLAG_SELECTABLE);
+        lv_obj_add_flag(pp_elrs.p_arr.panel[POS_SEND_BTN], FLAG_SELECTABLE);
         lv_obj_add_flag(pp_elrs.p_arr.panel[POS_SENT_OSD], FLAG_SELECTABLE);
         lv_obj_add_flag(pp_elrs.p_arr.panel[POS_SENT_STYLE], FLAG_SELECTABLE);
     } else {
         lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_AUTO_SEND], FLAG_SELECTABLE);
+        lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_SEND_BTN], FLAG_SELECTABLE);
         lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_SENT_OSD], FLAG_SELECTABLE);
         lv_obj_clear_flag(pp_elrs.p_arr.panel[POS_SENT_STYLE], FLAG_SELECTABLE);
     }
@@ -180,6 +205,9 @@ static lv_obj_t *page_elrs_create(lv_obj_t *parent, panel_arr_t *arr) {
     snprintf(buf, sizeof(buf), "%s VTX", _lang("Auto Send"));
     create_btn_group_item(&auto_send_group, cont, 2, buf, _lang("On"), _lang("Off"), "", "", POS_AUTO_SEND);
     btn_group_set_sel(&auto_send_group, !g_setting.elrs.auto_send_vtx);
+    snprintf(buf, sizeof(buf), "%s %s", _lang("Send"), _lang("Button"));
+    create_btn_group_item(&send_btn_group, cont, 4, buf, _lang("Left"), _lang("Right"), _lang("Either"), _lang("Off"), POS_SEND_BTN);
+    btn_group_set_sel(&send_btn_group, g_setting.elrs.vtx_send_button);
     snprintf(buf, sizeof(buf), "%s OSD", _lang("VTX Sent"));
     create_btn_group_item(&sent_osd_group, cont, 3, buf, _lang("On"), _lang("Long press"), _lang("Off"), "", POS_SENT_OSD);
     btn_group_set_sel(&sent_osd_group, g_setting.elrs.vtx_sent_osd);
@@ -303,6 +331,12 @@ static void page_elrs_on_click(uint8_t key, int sel) {
         btn_group_toggle_sel(&auto_send_group);
         g_setting.elrs.auto_send_vtx = btn_group_get_sel(&auto_send_group) == 0;
         settings_put_bool("elrs", "auto_send_vtx", g_setting.elrs.auto_send_vtx);
+    } else if (sel == POS_SEND_BTN) // which long press puts the channel on air
+    {
+        btn_group_toggle_sel(&send_btn_group);
+        g_setting.elrs.vtx_send_button = btn_group_get_sel(&send_btn_group);
+        ini_putl("elrs", "vtx_send_button", g_setting.elrs.vtx_send_button, SETTING_INI);
+        update_sent_preview();
     } else if (sel == POS_SENT_OSD) // when to show the green VTX SENT banner
     {
         btn_group_toggle_sel(&sent_osd_group);
