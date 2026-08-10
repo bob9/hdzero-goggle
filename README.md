@@ -16,8 +16,8 @@ https://www.paypal.com/paypalme/ripleyjb
 
 | Release | Contents |
 | --- | --- |
-| **Standard** (`main`, `v9.6.0`) | Everything documented below **plus** the Cinema media client (Plex, Jellyfin, Immich). |
-| **No Cinema** (`no-cinema`, `v9.6.0-nocinema`) | Everything documented below. The FPV firmware with no media client — this build. |
+| **Standard** (`main`, `v9.6.1`) | Everything documented below **plus** the Cinema media client (Plex, Jellyfin, Immich). |
+| **No Cinema** (`no-cinema`, `v9.6.1-nocinema`) | Everything documented below. The FPV firmware with no media client — this build. |
 | **Games** (`games`, `v9.6.0-games`) | The standard build **plus** DOOM, QUAKE and Minecraft, playable from the transmitter. Not included in the standard release. |
 | **Screen recorder** (`screen-recorder`) | The standard build **plus** on-goggle screen recording to the SD card, for capturing demo footage without filming through the lens. |
 
@@ -65,6 +65,12 @@ Everything in this section is in addition to stock HDZero firmware.
   commands at all.
 - **Send VTX is a deliberate action**, assignable to a button (default: right
   long-press). Changing channels never auto-sends.
+- **The send gesture is yours to choose** — **Send Button** (Left, Right,
+  Either, Off) and **Send Press** (Long, Short, Either) decide which press
+  while the channel tuner is up actually transmits to the VTX. Stock firmware
+  hard-wires this to a left long-press, which is the same button people reach
+  for as "back" — easy to fire by accident and land on someone else's channel.
+  The unassigned button still tunes the goggle; it just stays off air.
 - **Configurable "VTX Sent" banner** with a live preview of the style.
 - **ELRS backpack fix** — readiness-gated power-on plus a self-healing watchdog.
 
