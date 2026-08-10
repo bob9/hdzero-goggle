@@ -205,6 +205,8 @@ typedef struct {
     // press still confirms locally (like a click), so the goggle follows the
     // dial without putting anyone on air by accident.
     uint8_t vtx_send_button;
+    // Whether that button sends on a short press, a long press, or either.
+    uint8_t vtx_send_press;
 } setting_elrs_t;
 
 typedef enum {
@@ -224,6 +226,12 @@ typedef enum {
     SETTING_VTX_SEND_BUTTON_EITHER = 2, // either long press
     SETTING_VTX_SEND_BUTTON_OFF = 3,    // neither: only Send VTX / Auto Send transmit
 } setting_vtx_send_button_t;
+
+typedef enum {
+    SETTING_VTX_SEND_PRESS_LONG = 0,   // long press only (default, stock behaviour)
+    SETTING_VTX_SEND_PRESS_SHORT = 1,  // short press only
+    SETTING_VTX_SEND_PRESS_EITHER = 2, // short or long
+} setting_vtx_send_press_t;
 
 typedef enum {
     EMBEDDED_4x3,
