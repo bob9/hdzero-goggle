@@ -2,6 +2,7 @@
 
 #if defined(HDZBOXPRO) || defined(HDZGOGGLE2) || defined(HDZGOGGLE)
 
+#include <pthread.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -17,7 +18,13 @@
 #include "driver/dm6302.h"
 #include "driver/hardware.h"
 #include "driver/rtc6715.h"
+#include "driver/screen.h"
 #include "ui/page_common.h"
+#include "util/hwlog.h"
+
+// Panel-off mask for the baseband reset's green flash (defined with the
+// bw-reacquire watchdog below).
+static void hdz_reset_blank(bool on);
 
 // Idle-timeout power management state.
 // Written from probe calls (UI thread); read+written from thread_peripheral.
@@ -497,6 +504,7 @@ static void try_crossover_probe(void) {
 
             pthread_mutex_lock(&lvgl_mutex);
             osd_detecting_show(true);
+            hdz_reset_blank(true); // panel off across the bandwidth reset
             HDZero_open(other);
             usleep(200000); // settle before checking the lock
             scan_probe_hdzero((uint8_t)g_setting.source.hdzero_band, hdz_ch,
@@ -504,6 +512,7 @@ static void try_crossover_probe(void) {
             if (hdz_found)
                 g_hdz_detected_bw = other; // picture returns on its own
             osd_detecting_show(false);
+            hdz_reset_blank(false);
             pthread_mutex_unlock(&lvgl_mutex);
             LOGI("auto-detect crossover: analog rssi=%u mv, HDZ bw=%u found=%d",
                  rssi_mv, other, hdz_found);
@@ -655,29 +664,33 @@ void scan_core_idle_tick(void) {
 // at home the lock simply returns, at the opposite one the next probe finds
 // it. Per-tick sweeping is still avoided (that flashed the screen green
 // non-stop); between attempts the plane shows the normal no-signal black.
-// Black out the baseband reset's green flash. An LVGL cover can't do it: the
-// FPGA chroma-keys near-black OSD pixels through to the video plane, so a black
-// cover is transparent (see 5ebaf23). The flash is an all-zero video frame --
-// green only because of its chroma -- so dropping the FPGA's video saturation
-// to 0 renders it black, identical to the normal no-signal screen. Only ever
-// engaged while the HDZero picture is already dark; restored to the user's
-// HDZero saturation the moment a signal locks, or when the dark-HDZ-viewer
-// state ends. The "on" write is unconditional: an image_settings_apply from a
-// source re-entry may have restored saturation under us.
-static bool hdz_dark_mask_on = false;
+// Black out the baseband reset's green flash by switching the OLED panel off
+// for the duration of the reset. Two earlier attempts could not hide it:
+//  - an LVGL cover (5ebaf23): the FPGA chroma-keys near-black OSD pixels
+//    through to the video plane, so a black cover is transparent;
+//  - zero FPGA saturation (9.6.2-nocinema-test1): field test still green, so
+//    the flash is not routed through the FPGA's colour stage.
+// The panel-off command sits downstream of everything, so nothing the FPGA
+// drives can show. It is the same screen.display(0)/(1) pair every display
+// mode switch already wraps itself in (~25ms off, ~30ms on). Only ever used
+// while the HDZero picture is already dark; the OSD blinks off with it.
+// BoxPro is excluded: its screen.display is a full LCD power cycle (~430ms).
+#if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
+extern pthread_mutex_t hardware_mutex; // serializes OLED/FPGA writes (hardware-goggle*.c)
+#define HDZ_RESET_BLANK_HOLD_US 150000 // keep dark while the reopened baseband settles
 
-static void hdz_dark_mask(bool on) {
-    if (on) {
-        Set_Saturation(0);
-        hdz_dark_mask_on = true;
-    } else if (hdz_dark_mask_on) {
-        hdz_dark_mask_on = false;
-        // Left HDZero: the new source's switch applied its own image settings,
-        // so don't overwrite them with HDZero's.
-        if (g_source_info.source == SOURCE_HDZERO)
-            Set_Saturation(settings_image_video(SETTING_IMAGE_SOURCE_HDZERO)->saturation);
-    }
+static void hdz_reset_blank(bool on) {
+    if (!on)
+        usleep(HDZ_RESET_BLANK_HOLD_US);
+    pthread_mutex_lock(&hardware_mutex);
+    screen.display(!on);
+    pthread_mutex_unlock(&hardware_mutex);
 }
+#else
+static void hdz_reset_blank(bool on) {
+    (void)on;
+}
+#endif
 
 #define HDZ_BW_REACQUIRE_DARK_THRESH 15 // ~1.5s of no signal before reacquiring
 #define HDZ_BW_REACQUIRE_RETRY_TICKS 40 // ~4s between attempts while still dark
@@ -702,12 +715,10 @@ void scan_core_hdz_bw_tick(void) {
         (!recover_all_bw &&
          g_setting.source.hdzero_bw != SETTING_SOURCES_HDZERO_BW_BOTH)) {
         dark_ticks = 0;
-        hdz_dark_mask(false);
         return;
     }
 
     if ((rx_status[0].rx_valid | rx_status[1].rx_valid) != 0) {
-        hdz_dark_mask(false); // picture is back: restore the user's saturation
         // Have signal. The alternation below can leave the receiver parked on
         // a bandwidth other than the last detected one, so track the one that
         // actually carries the signal -- entry paths and dial retunes open at
@@ -757,8 +768,10 @@ void scan_core_hdz_bw_tick(void) {
     // (and the baseband resets' brief flashes) explained instead of a silent
     // black screen. Runs on thread_peripheral, but we hold lvgl_mutex here, so
     // the synchronous paint is serialized with the main UI.
-    hdz_dark_mask(true); // the resets below flash black, not green
+    struct timespec blank_t0, blank_t1;
+    clock_gettime(CLOCK_MONOTONIC, &blank_t0);
     osd_detecting_show(true);
+    hdz_reset_blank(true); // panel off: the resets below can't flash green
 
     if (g_setting.source.hdzero_bw == SETTING_SOURCES_HDZERO_BW_BOTH) {
         // BW=Auto: hop to the bandwidth opposite the last-locked one and check
@@ -805,6 +818,12 @@ void scan_core_hdz_bw_tick(void) {
     }
 
     osd_detecting_show(false);
+    hdz_reset_blank(false); // settle, then panel back on
+    clock_gettime(CLOCK_MONOTONIC, &blank_t1);
+    hwlog("bw reacquire: panel blanked %ldms (bw mode=%d, now open bw=%d)",
+          (blank_t1.tv_sec - blank_t0.tv_sec) * 1000 +
+              (blank_t1.tv_nsec - blank_t0.tv_nsec) / 1000000L,
+          g_setting.source.hdzero_bw, g_hw_stat.hdz_bw);
     pthread_mutex_unlock(&lvgl_mutex);
 }
 
