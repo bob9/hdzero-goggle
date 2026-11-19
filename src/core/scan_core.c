@@ -655,6 +655,30 @@ void scan_core_idle_tick(void) {
 // at home the lock simply returns, at the opposite one the next probe finds
 // it. Per-tick sweeping is still avoided (that flashed the screen green
 // non-stop); between attempts the plane shows the normal no-signal black.
+// Black out the baseband reset's green flash. An LVGL cover can't do it: the
+// FPGA chroma-keys near-black OSD pixels through to the video plane, so a black
+// cover is transparent (see 5ebaf23). The flash is an all-zero video frame --
+// green only because of its chroma -- so dropping the FPGA's video saturation
+// to 0 renders it black, identical to the normal no-signal screen. Only ever
+// engaged while the HDZero picture is already dark; restored to the user's
+// HDZero saturation the moment a signal locks, or when the dark-HDZ-viewer
+// state ends. The "on" write is unconditional: an image_settings_apply from a
+// source re-entry may have restored saturation under us.
+static bool hdz_dark_mask_on = false;
+
+static void hdz_dark_mask(bool on) {
+    if (on) {
+        Set_Saturation(0);
+        hdz_dark_mask_on = true;
+    } else if (hdz_dark_mask_on) {
+        hdz_dark_mask_on = false;
+        // Left HDZero: the new source's switch applied its own image settings,
+        // so don't overwrite them with HDZero's.
+        if (g_source_info.source == SOURCE_HDZERO)
+            Set_Saturation(settings_image_video(SETTING_IMAGE_SOURCE_HDZERO)->saturation);
+    }
+}
+
 #define HDZ_BW_REACQUIRE_DARK_THRESH 15 // ~1.5s of no signal before reacquiring
 #define HDZ_BW_REACQUIRE_RETRY_TICKS 40 // ~4s between attempts while still dark
 void scan_core_hdz_bw_tick(void) {
@@ -678,10 +702,12 @@ void scan_core_hdz_bw_tick(void) {
         (!recover_all_bw &&
          g_setting.source.hdzero_bw != SETTING_SOURCES_HDZERO_BW_BOTH)) {
         dark_ticks = 0;
+        hdz_dark_mask(false);
         return;
     }
 
     if ((rx_status[0].rx_valid | rx_status[1].rx_valid) != 0) {
+        hdz_dark_mask(false); // picture is back: restore the user's saturation
         // Have signal. The alternation below can leave the receiver parked on
         // a bandwidth other than the last detected one, so track the one that
         // actually carries the signal -- entry paths and dial retunes open at
@@ -731,6 +757,7 @@ void scan_core_hdz_bw_tick(void) {
     // (and the baseband resets' brief flashes) explained instead of a silent
     // black screen. Runs on thread_peripheral, but we hold lvgl_mutex here, so
     // the synchronous paint is serialized with the main UI.
+    hdz_dark_mask(true); // the resets below flash black, not green
     osd_detecting_show(true);
 
     if (g_setting.source.hdzero_bw == SETTING_SOURCES_HDZERO_BW_BOTH) {
